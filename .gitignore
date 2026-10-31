@@ -150,6 +150,8 @@ activemq-data/
 *.sage.py
 
 # Environments
+.DS_Store
+node_modules/
 .env
 .envrc
 .venv
