@@ -1,0 +1,26 @@
+.class-node {
+  min-width: 220px;
+  background: white;
+  border: 1px solid #64748b;
+  border-radius: 6px;
+  color: #1e293b;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.class-node__header {
+  padding: 10px;
+  text-align: center;
+  font-weight: 600;
+  background: #e8eef8;
+  border-bottom: 1px solid #64748b;
+}
+
+.class-node__section {
+  padding: 10px;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.class-node__section:last-of-type {
+  border-bottom: none;
+}
