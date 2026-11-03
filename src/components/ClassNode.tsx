@@ -1,38 +1,29 @@
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
+import type { UMLClassNodeData } from '../diagram/types'
+import './ClassNode.css'
 
-type ClassNodeData = {
-  name: string;
-  attributes: string[];
-  methods: string[];
-};
+type ClassFlowNode = Node<UMLClassNodeData, 'class'>
 
-export default function ClassNode({ data }: NodeProps) {
-  const classData = data as ClassNodeData;
-
+export default function ClassNode({ data }: NodeProps<ClassFlowNode>) {
   return (
     <div className="class-node">
-      {/* Connection point at the top */}
       <Handle type="target" position={Position.Top} />
 
-      {/* Class name */}
-      <div className="class-node__header">{classData.name}</div>
+      <div className="class-node__header">{data.name}</div>
 
-      {/* Attributes section */}
       <div className="class-node__section">
-        {classData.attributes.map((attribute, index) => (
-          <div key={index}>- {attribute}</div>
+        {data.attributes.map((attribute) => (
+          <div key={attribute.id}>- {attribute.name}: {attribute.type}</div>
         ))}
       </div>
 
-      {/* Methods section */}
-      <div className="class-node__section">
-        {classData.methods.map((method, index) => (
-          <div key={index}>+ {method}</div>
+      <div className="class-node__section class-node__section--methods">
+        {data.methods.map((method) => (
+          <div key={method.id}>+ {method.name}(): {method.returnType}</div>
         ))}
       </div>
 
-      {/* Connection point at the bottom */}
       <Handle type="source" position={Position.Bottom} />
     </div>
-  );
+  )
 }

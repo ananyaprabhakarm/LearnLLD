@@ -1,21 +1,25 @@
 export type UMLAttribute = {
-  id: String;
-  name: String;
-  type: String;
+  id: string;
+  name: string;
+  type: string;
 };
 
 export type UMLMethod = {
-  id: String;
-  name: String;
-  returnType: String;
+  id: string;
+  name: string;
+  returnType: string;
 };
 
 export type UMLClass = {
-  id: String;
-  name: String;
+  id: string;
+  position: { x: number; y: number };
+  name: string;
   attributes: UMLAttribute[];
   methods: UMLMethod[];
 };
+
+// React Flow stores class fields in `data`; position and id stay on the node itself.
+export type UMLClassNodeData = Pick<UMLClass, 'name' | 'attributes' | 'methods'>;
 
 export type UMLRelationshipKind =
   | "inheritance"
