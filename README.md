@@ -19,11 +19,19 @@ Open the local URL printed by Vite. Run `npm run build` in `frontend/` to type-c
 - Add a class with the left toolbar. Connect node handles to create labeled, directional relationships; nodes can have multiple connections.
 - Select a connection and use its delete action or press Delete/Backspace. Keyboard deletion is ignored while editing text fields.
 
-The current diagram is held in React state for the page session. There is no persistence or backend yet.
+## Workspaces and canvases
+
+- The editor currently has one workspace. Edit its name in the left sidebar.
+- Create a canvas with the **+** button beside **CANVASES**. New canvases start empty; the first canvas contains the `User`–`Order` example.
+- Select a canvas in the sidebar to switch to it. Rename the active canvas by editing its title above the diagram.
+- Each canvas keeps its own nodes and connections while you switch, so editing one canvas does not replace another canvas's diagram.
+- Workspace and canvas data currently live in React state for the page session. Refreshing the page resets them; no browser storage, backend, or account persistence is implemented yet.
+
+Multiple workspaces and persistent save/load are later milestones.
 
 ## Frontend structure
 
-- `frontend/src/App.tsx` — workspace, React Flow state, class editing, and edge actions.
+- `frontend/src/App.tsx` — single-workspace state, named canvas list and switching, React Flow state, class editing, and edge actions.
 - `frontend/src/diagram/types.ts` — serializable UML classes, attributes, methods, and relationships.
 - `frontend/src/components/ClassNode.tsx` — reusable UML class node.
 - `frontend/public/assets/` — LearnLLD logo and browser icons.
