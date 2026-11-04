@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  applyEdgeChanges,
+  applyNodeChanges,
   Background,
   Controls,
   MarkerType,
   MiniMap,
   ReactFlow,
-  useEdgesState,
-  useNodesState,
   type Connection,
+  type EdgeChange,
   type Edge,
+  type NodeChange,
   type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -22,6 +24,12 @@ import type {
 } from "./diagram/types";
 
 type DiagramNode = Node<UMLClassNodeData, "class">;
+type DiagramCanvas = {
+  id: string;
+  name: string;
+  nodes: DiagramNode[];
+  edges: Edge[];
+};
 
 const initialClasses: UMLClass[] = [
   {
@@ -75,6 +83,13 @@ const initialEdges: Edge[] = [
   },
 ];
 
+const initialCanvas: DiagramCanvas = {
+  id: "canvas-main",
+  name: "Untitled diagram",
+  nodes: initialNodes,
+  edges: initialEdges,
+};
+
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -82,28 +97,68 @@ function createId(prefix: string) {
 const nodeTypes = { class: ClassNode };
 
 function App() {
-  const [nodes, setNodes, onNodesChange] =
-    useNodesState<DiagramNode>(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [workspace, setWorkspace] = useState({
+    name: "LearnLLD Workspace",
+    canvases: [initialCanvas],
+  });
+  const [activeCanvasId, setActiveCanvasId] = useState(initialCanvas.id);
+  const activeCanvas =
+    workspace.canvases.find((canvas) => canvas.id === activeCanvasId) ??
+    workspace.canvases[0];
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [classDraft, setClassDraft] = useState<UMLClassNodeData | null>(null);
 
+  const updateActiveCanvas = useCallback(
+    (update: (canvas: DiagramCanvas) => DiagramCanvas) => {
+      setWorkspace((current) => ({
+        ...current,
+        canvases: current.canvases.map((canvas) =>
+          canvas.id === activeCanvasId ? update(canvas) : canvas,
+        ),
+      }));
+    },
+    [activeCanvasId],
+  );
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange<DiagramNode>[]) => {
+      updateActiveCanvas((canvas) => ({
+        ...canvas,
+        nodes: applyNodeChanges(changes, canvas.nodes) as DiagramNode[],
+      }));
+    },
+    [updateActiveCanvas],
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      updateActiveCanvas((canvas) => ({
+        ...canvas,
+        edges: applyEdgeChanges(changes, canvas.edges),
+      }));
+    },
+    [updateActiveCanvas],
+  );
+
   const onConnect = useCallback(
     (connection: Connection) => {
       // Append directly so parallel connections between the same handles are kept.
-      setEdges((current) => [
-        ...current,
-        {
-          ...connection,
-          id: createId("relationship"),
-          label: "association",
-          ...relationshipEdgeOptions,
-        },
-      ]);
+      updateActiveCanvas((canvas) => ({
+        ...canvas,
+        edges: [
+          ...canvas.edges,
+          {
+            ...connection,
+            id: createId("relationship"),
+            label: "association",
+            ...relationshipEdgeOptions,
+          },
+        ],
+      }));
     },
-    [setEdges],
+    [updateActiveCanvas],
   );
 
   const onSelectionChange = useCallback(
@@ -118,11 +173,12 @@ function App() {
 
   const deleteSelectedEdges = useCallback(() => {
     if (selectedEdgeIds.length === 0) return;
-    setEdges((current) =>
-      current.filter((edge) => !selectedEdgeIds.includes(edge.id)),
-    );
+    updateActiveCanvas((canvas) => ({
+      ...canvas,
+      edges: canvas.edges.filter((edge) => !selectedEdgeIds.includes(edge.id)),
+    }));
     setSelectedEdgeIds([]);
-  }, [selectedEdgeIds, setEdges]);
+  }, [selectedEdgeIds, updateActiveCanvas]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -147,7 +203,9 @@ function App() {
 
   const openClassEditor = () => {
     if (!selectedClassId) return;
-    const selectedClass = nodes.find((node) => node.id === selectedClassId);
+    const selectedClass = activeCanvas.nodes.find(
+      (node) => node.id === selectedClassId,
+    );
     if (!selectedClass) return;
 
     setEditingClassId(selectedClass.id);
@@ -165,11 +223,12 @@ function App() {
 
   const saveClassEditor = () => {
     if (!editingClassId || !classDraft) return;
-    setNodes((current) =>
-      current.map((node) =>
+    updateActiveCanvas((canvas) => ({
+      ...canvas,
+      nodes: canvas.nodes.map((node) =>
         node.id === editingClassId ? { ...node, data: classDraft } : node,
       ),
-    );
+    }));
     closeClassEditor();
   };
 
@@ -201,18 +260,64 @@ function App() {
 
   const addClass = () => {
     const id = `class-${Date.now()}`;
-    setNodes((current) => [
-      ...current,
-      {
-        id,
-        type: "class",
-        position: {
-          x: 220 + (current.length % 4) * 50,
-          y: 130 + (current.length % 4) * 50,
+    updateActiveCanvas((canvas) => ({
+      ...canvas,
+      nodes: [
+        ...canvas.nodes,
+        {
+          id,
+          type: "class",
+          position: {
+            x: 220 + (canvas.nodes.length % 4) * 50,
+            y: 130 + (canvas.nodes.length % 4) * 50,
+          },
+          data: { name: "New Class", attributes: [], methods: [] },
         },
-        data: { name: "New Class", attributes: [], methods: [] },
-      },
-    ]);
+      ],
+    }));
+  };
+
+  const addCanvas = () => {
+    const canvas: DiagramCanvas = {
+      id: createId("canvas"),
+      name: `Canvas ${workspace.canvases.length + 1}`,
+      nodes: [],
+      edges: [],
+    };
+    setWorkspace((current) => ({
+      ...current,
+      canvases: [
+        ...current.canvases.map((item) => ({
+          ...item,
+          nodes: item.nodes.map((node) => ({ ...node, selected: false })),
+          edges: item.edges.map((edge) => ({ ...edge, selected: false })),
+        })),
+        canvas,
+      ],
+    }));
+    setActiveCanvasId(canvas.id);
+    setSelectedClassId(null);
+    setSelectedEdgeIds([]);
+    closeClassEditor();
+  };
+
+  const selectCanvas = (canvasId: string) => {
+    setWorkspace((current) => ({
+      ...current,
+      canvases: current.canvases.map((canvas) => ({
+        ...canvas,
+        nodes: canvas.nodes.map((node) => ({ ...node, selected: false })),
+        edges: canvas.edges.map((edge) => ({ ...edge, selected: false })),
+      })),
+    }));
+    setActiveCanvasId(canvasId);
+    setSelectedClassId(null);
+    setSelectedEdgeIds([]);
+    closeClassEditor();
+  };
+
+  const renameCanvas = (name: string) => {
+    updateActiveCanvas((canvas) => ({ ...canvas, name }));
   };
 
   return (
@@ -220,8 +325,8 @@ function App() {
       <header className="topbar">
         <Brand />
         <div className="workspace-title">
-          <span>Workspace</span>
-          <strong>Untitled diagram</strong>
+          <span>{workspace.name}</span>
+          <strong>{activeCanvas.name}</strong>
         </div>
         <div className="topbar-spacer" />
         <span className="save-state">
@@ -239,28 +344,60 @@ function App() {
       </header>
 
       <div className="workspace">
-        <aside className="toolbar" aria-label="Diagram tools">
-          <button
-            className="tool-button active"
-            type="button"
-            aria-label="Select and move nodes"
-            title="Select and move nodes"
-          >
-            <span>↖</span>
-          </button>
-          <div className="tool-divider" />
+        <aside className="workspace-sidebar" aria-label="Workspace and canvases">
+          <label className="workspace-name-field">
+            <span className="eyebrow">WORKSPACE</span>
+            <input
+              aria-label="Workspace name"
+              value={workspace.name}
+              onChange={(event) =>
+                setWorkspace((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+            />
+          </label>
+
+          <div className="canvas-list-heading">
+            <span>CANVASES</span>
+            <button
+              className="add-canvas-button"
+              type="button"
+              onClick={addCanvas}
+              aria-label="Create a new canvas"
+              title="Create a new canvas"
+            >
+              +
+            </button>
+          </div>
+          <nav className="canvas-list" aria-label="Workspace canvases">
+            {workspace.canvases.map((canvas) => (
+              <button
+                className={`canvas-list-item${canvas.id === activeCanvasId ? " canvas-list-item--active" : ""}`}
+                type="button"
+                key={canvas.id}
+                onClick={() => selectCanvas(canvas.id)}
+                aria-current={canvas.id === activeCanvasId ? "page" : undefined}
+              >
+                <span className="canvas-list-icon" aria-hidden="true">▱</span>
+                <span className="canvas-list-name">{canvas.name || "Untitled canvas"}</span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="sidebar-tools-heading">TOOLS</div>
           <button
             className="tool-button add-tool"
             type="button"
             onClick={addClass}
-            title="Add a temporary class node"
+            title="Add a class to this canvas"
           >
             <span>＋</span>
             <small>Class</small>
           </button>
           <div className="toolbar-note">
-            Drag nodes to arrange them. Connect the handles to show a
-            relationship.
+            Drag nodes to arrange them. Connect the handles to show a relationship.
           </div>
         </aside>
 
@@ -268,7 +405,14 @@ function App() {
           <div className="canvas-heading">
             <div>
               <p className="eyebrow">DIAGRAM CANVAS</p>
-              <h1>Untitled diagram</h1>
+              <h1>
+                <input
+                  className="canvas-name-input"
+                  aria-label="Canvas name"
+                  value={activeCanvas.name}
+                  onChange={(event) => renameCanvas(event.target.value)}
+                />
+              </h1>
             </div>
             <span className="canvas-hint">
               Changes are held in this browser session
@@ -288,8 +432,8 @@ function App() {
           </div>
           <div className="flow-frame">
             <ReactFlow
-              nodes={nodes}
-              edges={edges}
+              nodes={activeCanvas.nodes}
+              edges={activeCanvas.edges}
               nodeTypes={nodeTypes}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
