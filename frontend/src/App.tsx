@@ -16,6 +16,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import Brand from "./components/Brand";
 import ClassNode from "./components/ClassNode";
+import LandingPage from "./components/LandingPage";
 import type {
   UMLAttribute,
   UMLClass,
@@ -96,7 +97,7 @@ function createId(prefix: string) {
 
 const nodeTypes = { class: ClassNode };
 
-function App() {
+function EditorWorkspace() {
   const [workspace, setWorkspace] = useState({
     name: "LearnLLD Workspace",
     canvases: [initialCanvas],
@@ -597,6 +598,14 @@ function App() {
         )}
       </div>
     </main>
+  );
+}
+
+function App() {
+  return window.location.pathname === "/editor" ? (
+    <EditorWorkspace />
+  ) : (
+    <LandingPage />
   );
 }
 
