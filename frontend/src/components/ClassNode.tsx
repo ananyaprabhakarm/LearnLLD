@@ -39,10 +39,7 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
     setEditingName(false);
   };
 
-  const beginMemberEdit = (
-    member: EditingMember,
-    value: MemberDraft,
-  ) => {
+  const beginMemberEdit = (member: EditingMember, value: MemberDraft) => {
     setEditingMember(member);
     setMemberDraft(value);
   };
@@ -142,7 +139,10 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
         (attribute) => attribute.id !== attributeId,
       ),
     }));
-    if (editingMember?.kind === "attribute" && editingMember.id === attributeId) {
+    if (
+      editingMember?.kind === "attribute" &&
+      editingMember.id === attributeId
+    ) {
       setEditingMember(null);
       setMemberDraft(null);
     }
@@ -223,7 +223,7 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
         <div
           className="class-node__header nodrag"
           title="Double-click to edit class name"
-          onDoubleClick={beginNameEdit}
+          onClick={beginNameEdit}
         >
           {data.name || "Untitled class"}
         </div>
@@ -307,7 +307,10 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
         </button>
       </section>
 
-      <section className="class-node__section class-node__section--methods" aria-label="Methods">
+      <section
+        className="class-node__section class-node__section--methods"
+        aria-label="Methods"
+      >
         {data.methods.map((method) =>
           editingMember?.kind === "method" &&
           editingMember.id === method.id &&
