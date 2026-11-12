@@ -16,13 +16,9 @@ import {
 import "@xyflow/react/dist/style.css";
 import Brand from "./components/Brand";
 import ClassNode from "./components/ClassNode";
+import { ClassNodeActionsContext } from "./components/ClassNodeActionsContext";
 import LandingPage from "./components/LandingPage";
-import type {
-  UMLAttribute,
-  UMLClass,
-  UMLClassNodeData,
-  UMLMethod,
-} from "./diagram/types";
+import type { UMLClass, UMLClassNodeData } from "./diagram/types";
 
 type DiagramNode = Node<UMLClassNodeData, "class">;
 type DiagramCanvas = {
@@ -106,10 +102,7 @@ function EditorWorkspace() {
   const activeCanvas =
     workspace.canvases.find((canvas) => canvas.id === activeCanvasId) ??
     workspace.canvases[0];
-  const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
-  const [editingClassId, setEditingClassId] = useState<string | null>(null);
-  const [classDraft, setClassDraft] = useState<UMLClassNodeData | null>(null);
 
   const updateActiveCanvas = useCallback(
     (update: (canvas: DiagramCanvas) => DiagramCanvas) => {
@@ -121,6 +114,21 @@ function EditorWorkspace() {
       }));
     },
     [activeCanvasId],
+  );
+
+  const updateClassData = useCallback(
+    (
+      nodeId: string,
+      update: (current: UMLClassNodeData) => UMLClassNodeData,
+    ) => {
+      updateActiveCanvas((canvas) => ({
+        ...canvas,
+        nodes: canvas.nodes.map((node) =>
+          node.id === nodeId ? { ...node, data: update(node.data) } : node,
+        ),
+      }));
+    },
+    [updateActiveCanvas],
   );
 
   const onNodesChange = useCallback(
@@ -163,10 +171,7 @@ function EditorWorkspace() {
   );
 
   const onSelectionChange = useCallback(
-    ({ nodes: selectedNodes, edges: selectedEdges }: { nodes: DiagramNode[]; edges: Edge[] }) => {
-      setSelectedClassId(
-        selectedNodes.length === 1 ? selectedNodes[0].id : null,
-      );
+    ({ edges: selectedEdges }: { nodes: DiagramNode[]; edges: Edge[] }) => {
       setSelectedEdgeIds(selectedEdges.map((edge) => edge.id));
     },
     [],
@@ -201,63 +206,6 @@ function EditorWorkspace() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [deleteSelectedEdges, selectedEdgeIds.length]);
-
-  const openClassEditor = () => {
-    if (!selectedClassId) return;
-    const selectedClass = activeCanvas.nodes.find(
-      (node) => node.id === selectedClassId,
-    );
-    if (!selectedClass) return;
-
-    setEditingClassId(selectedClass.id);
-    setClassDraft({
-      ...selectedClass.data,
-      attributes: selectedClass.data.attributes.map((attribute) => ({ ...attribute })),
-      methods: selectedClass.data.methods.map((method) => ({ ...method })),
-    });
-  };
-
-  const closeClassEditor = () => {
-    setEditingClassId(null);
-    setClassDraft(null);
-  };
-
-  const saveClassEditor = () => {
-    if (!editingClassId || !classDraft) return;
-    updateActiveCanvas((canvas) => ({
-      ...canvas,
-      nodes: canvas.nodes.map((node) =>
-        node.id === editingClassId ? { ...node, data: classDraft } : node,
-      ),
-    }));
-    closeClassEditor();
-  };
-
-  const updateAttribute = (id: string, changes: Partial<UMLAttribute>) => {
-    setClassDraft((current) =>
-      current
-        ? {
-            ...current,
-            attributes: current.attributes.map((attribute) =>
-              attribute.id === id ? { ...attribute, ...changes } : attribute,
-            ),
-          }
-        : current,
-    );
-  };
-
-  const updateMethod = (id: string, changes: Partial<UMLMethod>) => {
-    setClassDraft((current) =>
-      current
-        ? {
-            ...current,
-            methods: current.methods.map((method) =>
-              method.id === id ? { ...method, ...changes } : method,
-            ),
-          }
-        : current,
-    );
-  };
 
   const addClass = () => {
     const id = `class-${Date.now()}`;
@@ -297,9 +245,7 @@ function EditorWorkspace() {
       ],
     }));
     setActiveCanvasId(canvas.id);
-    setSelectedClassId(null);
     setSelectedEdgeIds([]);
-    closeClassEditor();
   };
 
   const selectCanvas = (canvasId: string) => {
@@ -312,9 +258,7 @@ function EditorWorkspace() {
       })),
     }));
     setActiveCanvasId(canvasId);
-    setSelectedClassId(null);
     setSelectedEdgeIds([]);
-    closeClassEditor();
   };
 
   const renameCanvas = (name: string) => {
@@ -419,11 +363,6 @@ function EditorWorkspace() {
               Changes are held in this browser session
             </span>
             <div className="canvas-actions">
-              {selectedClassId && (
-                <button className="panel-action" type="button" onClick={openClassEditor}>
-                  Edit Class
-                </button>
-              )}
               {selectedEdgeIds.length > 0 && (
                 <button className="panel-action panel-action--danger" type="button" onClick={deleteSelectedEdges}>
                   Delete connection{selectedEdgeIds.length > 1 ? "s" : ""}
@@ -432,170 +371,38 @@ function EditorWorkspace() {
             </div>
           </div>
           <div className="flow-frame">
-            <ReactFlow
-              nodes={activeCanvas.nodes}
-              edges={activeCanvas.edges}
-              nodeTypes={nodeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onSelectionChange={onSelectionChange}
-              deleteKeyCode={null}
-              edgesFocusable
-              elementsSelectable
-              fitView
-              fitViewOptions={{ padding: 0.25 }}
-              defaultEdgeOptions={relationshipEdgeOptions}
-              minZoom={0.25}
-              maxZoom={1.8}
-            >
-              <Background color="#dfe4eb" gap={22} size={1} />
-              <Controls position="bottom-left" />
-              <MiniMap
-                position="bottom-right"
-                nodeColor="#97a7c1"
-                maskColor="rgb(247 248 250 / 65%)"
-              />
-            </ReactFlow>
+            <ClassNodeActionsContext.Provider value={{ updateClassData }}>
+              <ReactFlow
+                nodes={activeCanvas.nodes}
+                edges={activeCanvas.edges}
+                nodeTypes={nodeTypes}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onSelectionChange={onSelectionChange}
+                deleteKeyCode={null}
+                edgesFocusable
+                elementsSelectable
+                fitView
+                fitViewOptions={{ padding: 0.25 }}
+                defaultEdgeOptions={relationshipEdgeOptions}
+                minZoom={0.25}
+                maxZoom={1.8}
+              >
+                <Background color="#dfe4eb" gap={22} size={1} />
+                <Controls position="bottom-left" />
+                <MiniMap
+                  position="bottom-right"
+                  nodeColor="#97a7c1"
+                  maskColor="rgb(247 248 250 / 65%)"
+                />
+              </ReactFlow>
+            </ClassNodeActionsContext.Provider>
             <div className="canvas-legend">
               <span className="legend-line" /> Relationship
             </div>
           </div>
         </section>
-
-        {classDraft && (
-          <aside className="class-editor" aria-label="Edit class details">
-            <div className="class-editor__header">
-              <div>
-                <p className="eyebrow">CLASS DETAILS</p>
-                <h2>Edit Class</h2>
-              </div>
-              <button className="icon-button" type="button" onClick={closeClassEditor} aria-label="Close class editor">
-                ×
-              </button>
-            </div>
-
-            <label className="editor-field">
-              <span>Class name</span>
-              <input
-                autoFocus
-                value={classDraft.name}
-                onChange={(event) =>
-                  setClassDraft({ ...classDraft, name: event.target.value })
-                }
-              />
-            </label>
-
-            <section className="editor-list" aria-labelledby="attributes-heading">
-              <div className="editor-list__heading">
-                <h3 id="attributes-heading">Attributes</h3>
-                <button
-                  className="text-button"
-                  type="button"
-                  onClick={() =>
-                    setClassDraft({
-                      ...classDraft,
-                      attributes: [
-                        ...classDraft.attributes,
-                        { id: createId("attribute"), name: "", type: "string" },
-                      ],
-                    })
-                  }
-                >
-                  + Add
-                </button>
-              </div>
-              {classDraft.attributes.map((attribute, index) => (
-                <div className="editor-row" key={attribute.id}>
-                  <input
-                    aria-label={`Attribute ${index + 1} name`}
-                    placeholder="Name"
-                    value={attribute.name}
-                    onChange={(event) => updateAttribute(attribute.id, { name: event.target.value })}
-                  />
-                  <input
-                    aria-label={`Attribute ${index + 1} type`}
-                    placeholder="Type"
-                    value={attribute.type}
-                    onChange={(event) => updateAttribute(attribute.id, { type: event.target.value })}
-                  />
-                  <button
-                    className="remove-button"
-                    type="button"
-                    aria-label={`Remove attribute ${index + 1}`}
-                    onClick={() =>
-                      setClassDraft({
-                        ...classDraft,
-                        attributes: classDraft.attributes.filter((item) => item.id !== attribute.id),
-                      })
-                    }
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </section>
-
-            <section className="editor-list" aria-labelledby="methods-heading">
-              <div className="editor-list__heading">
-                <h3 id="methods-heading">Methods</h3>
-                <button
-                  className="text-button"
-                  type="button"
-                  onClick={() =>
-                    setClassDraft({
-                      ...classDraft,
-                      methods: [
-                        ...classDraft.methods,
-                        { id: createId("method"), name: "", returnType: "void" },
-                      ],
-                    })
-                  }
-                >
-                  + Add
-                </button>
-              </div>
-              {classDraft.methods.map((method, index) => (
-                <div className="editor-row" key={method.id}>
-                  <input
-                    aria-label={`Method ${index + 1} name`}
-                    placeholder="Name"
-                    value={method.name}
-                    onChange={(event) => updateMethod(method.id, { name: event.target.value })}
-                  />
-                  <input
-                    aria-label={`Method ${index + 1} return type`}
-                    placeholder="Returns"
-                    value={method.returnType}
-                    onChange={(event) => updateMethod(method.id, { returnType: event.target.value })}
-                  />
-                  <button
-                    className="remove-button"
-                    type="button"
-                    aria-label={`Remove method ${index + 1}`}
-                    onClick={() =>
-                      setClassDraft({
-                        ...classDraft,
-                        methods: classDraft.methods.filter((item) => item.id !== method.id),
-                      })
-                    }
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </section>
-
-            <div className="class-editor__footer">
-              <button className="panel-action panel-action--quiet" type="button" onClick={closeClassEditor}>
-                Cancel
-              </button>
-              <button className="panel-action" type="button" onClick={saveClassEditor}>
-                Save changes
-              </button>
-            </div>
-          </aside>
-        )}
       </div>
     </main>
   );
