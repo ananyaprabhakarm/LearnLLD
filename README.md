@@ -25,9 +25,13 @@ Open the local URL printed by Vite. Run `npm run build` in `frontend/` to type-c
 - Create a canvas with the **+** button beside **CANVASES**. New canvases start empty; the first canvas contains the `User`–`Order` example.
 - Select a canvas in the sidebar to switch to it. Rename the active canvas by editing its title above the diagram.
 - Each canvas keeps its own nodes and connections while you switch, so editing one canvas does not replace another canvas's diagram.
-- Workspace and canvas data currently live in React state for the page session. Refreshing the page resets them; no browser storage, backend, or account persistence is implemented yet.
+- Workspace and canvas data currently live in React state for the page session. The FastAPI backend and typed frontend API client are available, but the editor UI does not yet call the API to load or save canvases; refreshing still resets the editor.
 
-Multiple workspaces and persistent save/load are later milestones.
+Multiple workspaces and connecting editor save/load actions to the backend remain later milestones.
+
+## Backend
+
+The initial FastAPI API and its setup, endpoint contract, frontend connection steps, and SQLite deployment limits are documented in [backend/README.md](backend/README.md). To run it locally, create the backend virtual environment, install `backend/requirements.txt`, copy `backend/.env.example` to `backend/.env`, and start Uvicorn from `backend/`.
 
 ## Frontend structure
 
@@ -36,3 +40,6 @@ Multiple workspaces and persistent save/load are later milestones.
 - `frontend/src/components/ClassNode.tsx` — reusable UML class node.
 - `frontend/public/assets/` — LearnLLD logo and browser icons.
 - `frontend/package.json` — frontend scripts and dependencies.
+- `frontend/src/api/diagrams.ts` — typed client for the diagram CRUD API.
+- `backend/app/` — FastAPI routes, Pydantic schemas, SQLAlchemy model, configuration, and database lifecycle.
+- `backend/tests/` — API tests using an isolated temporary SQLite database.
