@@ -1,5 +1,7 @@
 import Brand from "./Brand";
 
+type LandingPageProps = { onStartDesigning: () => void };
+
 const features = [
   {
     number: "01",
@@ -21,14 +23,18 @@ const features = [
   },
 ];
 
-export default function LandingPage() {
+export default function LandingPage({ onStartDesigning }: LandingPageProps) {
   return (
     <main className="landing-page">
       <header className="landing-header">
         <Brand />
-        <a className="landing-nav-link" href="/editor">
+        <button
+          className="landing-nav-link"
+          type="button"
+          onClick={onStartDesigning}
+        >
           Open editor <span aria-hidden="true">↗</span>
-        </a>
+        </button>
       </header>
 
       <section className="landing-hero">
@@ -43,9 +49,13 @@ export default function LandingPage() {
             Learn low-level design by turning ideas into clear, editable UML
             class diagrams. Start with the structure, then shape the details.
           </p>
-          <a className="landing-cta" href="/editor">
+          <button
+            className="landing-cta"
+            type="button"
+            onClick={onStartDesigning}
+          >
             Start designing <span aria-hidden="true">→</span>
-          </a>
+          </button>
           <p className="landing-caption">A focused workspace for your next design.</p>
         </div>
 
