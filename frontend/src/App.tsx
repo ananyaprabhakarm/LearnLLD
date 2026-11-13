@@ -255,6 +255,18 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     setSelectedEdgeIds([]);
   }, [selectedEdgeIds, selectedNodeIds, updateActiveCanvas]);
 
+  const deleteSelectedConnections = useCallback(() => {
+    if (selectedEdgeIds.length === 0) return;
+    const relationshipIds = new Set(selectedEdgeIds);
+    updateActiveCanvas((canvas) => ({
+      ...canvas,
+      relationships: canvas.relationships.filter(
+        (relationship) => !relationshipIds.has(relationship.id),
+      ),
+    }));
+    setSelectedEdgeIds([]);
+  }, [selectedEdgeIds, updateActiveCanvas]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
@@ -494,6 +506,15 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
             {(selectedNodeIds.length > 0 || selectedEdgeIds.length > 0) && (
               <button className="toolbar-action toolbar-action--danger" type="button" onClick={deleteSelected}>
                 Delete selected
+              </button>
+            )}
+            {selectedEdgeIds.length > 0 && (
+              <button
+                className="toolbar-action toolbar-action--danger"
+                type="button"
+                onClick={deleteSelectedConnections}
+              >
+                Delete {selectedEdgeIds.length === 1 ? "connection" : `${selectedEdgeIds.length} connections`}
               </button>
             )}
             {selectedEdgeIds.length === 1 && (
