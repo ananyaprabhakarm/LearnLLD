@@ -23,19 +23,34 @@ export type UMLClassNodeData = Pick<UMLClass, 'name' | 'attributes' | 'methods'>
 
 export type UMLRelationshipKind =
   | "inheritance"
+  | "realization"
   | "association"
+  | "bidirectional-association"
+  | "dependency"
   | "aggregation"
-  | "composition"
-  | "dependency";
+  | "composition";
 
 export type UMLRelationship = {
   id: string;
   sourceId: string;
   targetId: string;
   kind: UMLRelationshipKind;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
 };
 
 export type UMLDiagram = {
   classes: UMLClass[];
   relationships: UMLRelationship[];
+};
+
+export type UMLCanvas = UMLDiagram & {
+  id: string;
+  name: string;
+};
+
+export type UMLWorkspace = {
+  id: string;
+  name: string;
+  canvases: UMLCanvas[];
 };
