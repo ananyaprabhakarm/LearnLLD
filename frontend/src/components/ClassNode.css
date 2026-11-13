@@ -171,3 +171,11 @@
   border: 2px solid #fff;
   background: #7a91b6;
 }
+
+.class-node .class-node__handle--source {
+  background: #526b98;
+}
+
+.class-node .class-node__handle--target {
+  background: #48a4ad;
+}

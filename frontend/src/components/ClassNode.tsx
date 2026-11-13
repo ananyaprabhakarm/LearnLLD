@@ -14,6 +14,33 @@ type EditingMember =
   | { kind: "method"; id: string; isNew?: boolean };
 type MemberDraft = { name: string; type: string };
 
+const handleSides = [
+  {
+    id: "top",
+    position: Position.Top,
+    sourceStyle: { left: "36%" },
+    targetStyle: { left: "64%" },
+  },
+  {
+    id: "right",
+    position: Position.Right,
+    sourceStyle: { top: "36%" },
+    targetStyle: { top: "64%" },
+  },
+  {
+    id: "bottom",
+    position: Position.Bottom,
+    sourceStyle: { left: "36%" },
+    targetStyle: { left: "64%" },
+  },
+  {
+    id: "left",
+    position: Position.Left,
+    sourceStyle: { top: "36%" },
+    targetStyle: { top: "64%" },
+  },
+];
+
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -201,7 +228,16 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
 
   return (
     <div className="class-node">
-      <Handle type="target" position={Position.Top} />
+      {handleSides.map((side) => (
+        <Handle
+          key={`source-${side.id}`}
+          id={`source-${side.id}`}
+          className="class-node__handle class-node__handle--source"
+          type="source"
+          position={side.position}
+          style={side.sourceStyle}
+        />
+      ))}
 
       {editingName ? (
         <input
@@ -388,7 +424,16 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
         </button>
       </section>
 
-      <Handle type="source" position={Position.Bottom} />
+      {handleSides.map((side) => (
+        <Handle
+          key={`target-${side.id}`}
+          id={`target-${side.id}`}
+          className="class-node__handle class-node__handle--target"
+          type="target"
+          position={side.position}
+          style={side.targetStyle}
+        />
+      ))}
     </div>
   );
 }

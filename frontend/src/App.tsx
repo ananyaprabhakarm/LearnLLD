@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
 import {
-  applyEdgeChanges,
-  applyNodeChanges,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import {
   Background,
   Controls,
-  MarkerType,
+  ConnectionLineType,
   MiniMap,
+  Panel,
   ReactFlow,
+  useReactFlow,
   type Connection,
   type EdgeChange,
-  type Edge,
   type NodeChange,
   type Node,
 } from "@xyflow/react";
@@ -18,102 +24,116 @@ import Brand from "./components/Brand";
 import ClassNode from "./components/ClassNode";
 import { ClassNodeActionsContext } from "./components/ClassNodeActionsContext";
 import LandingPage from "./components/LandingPage";
-import type { UMLClass, UMLClassNodeData } from "./diagram/types";
+import RelationshipTypePopover from "./components/RelationshipTypePopover";
+import UMLRelationshipEdge, {
+  type UMLRelationshipFlowEdge,
+} from "./components/UMLRelationshipEdge";
+import WorkspaceCreationDialog from "./components/WorkspaceCreationDialog";
+import type {
+  UMLCanvas,
+  UMLClassNodeData,
+  UMLRelationship,
+  UMLRelationshipKind,
+  UMLWorkspace,
+} from "./diagram/types";
 
 type DiagramNode = Node<UMLClassNodeData, "class">;
-type DiagramCanvas = {
-  id: string;
-  name: string;
-  nodes: DiagramNode[];
-  edges: Edge[];
-};
-
-const initialClasses: UMLClass[] = [
-  {
-    id: "user",
-    position: { x: 170, y: 110 },
-    name: "User",
-    attributes: [
-      { id: "user-id", name: "id", type: "string" },
-      { id: "user-name", name: "name", type: "string" },
-    ],
-    methods: [
-      { id: "user-place-order", name: "placeOrder", returnType: "Order" },
-    ],
-  },
-  {
-    id: "order",
-    position: { x: 500, y: 260 },
-    name: "Order",
-    attributes: [
-      { id: "order-id", name: "id", type: "string" },
-      { id: "order-status", name: "status", type: "string" },
-    ],
-    methods: [{ id: "order-cancel", name: "cancel", returnType: "void" }],
-  },
-];
-
-const initialNodes: DiagramNode[] = initialClasses.map(
-  ({ id, position, ...data }) => ({
-    id,
-    type: "class",
-    position,
-    data,
-  }),
-);
-
-const relationshipEdgeOptions = {
-  type: "default" as const,
-  markerEnd: { type: MarkerType.ArrowClosed, color: "#647c9f" },
-  labelShowBg: true,
-  labelBgStyle: { fill: "#ffffff" },
-  labelBgPadding: [5, 2] as [number, number],
-};
-
-const initialEdges: Edge[] = [
-  {
-    id: "user-order",
-    source: "user",
-    target: "order",
-    label: "association",
-    ...relationshipEdgeOptions,
-  },
-];
-
-const initialCanvas: DiagramCanvas = {
-  id: "canvas-main",
-  name: "Untitled diagram",
-  nodes: initialNodes,
-  edges: initialEdges,
-};
+type DiagramEdge = UMLRelationshipFlowEdge;
+type RelationshipChooser =
+  | { mode: "create"; connection: Connection }
+  | { mode: "edit"; relationshipId: string }
+  | null;
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
 const nodeTypes = { class: ClassNode };
+const edgeTypes = { umlRelationship: UMLRelationshipEdge };
 
-function EditorWorkspace() {
-  const [workspace, setWorkspace] = useState({
-    name: "LearnLLD Workspace",
-    canvases: [initialCanvas],
-  });
-  const [activeCanvasId, setActiveCanvasId] = useState(initialCanvas.id);
+function FitViewButton() {
+  const { fitView } = useReactFlow<DiagramNode, DiagramEdge>();
+  return (
+    <Panel position="top-right" className="fit-view-panel">
+      <button
+        className="fit-view-button"
+        type="button"
+        onClick={() => void fitView({ padding: 0.2 })}
+      >
+        Fit diagram
+      </button>
+    </Panel>
+  );
+}
+
+type EditorWorkspaceProps = {
+  workspace: UMLWorkspace;
+  setWorkspace: Dispatch<SetStateAction<UMLWorkspace | null>>;
+};
+
+function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
+  const [activeCanvasId, setActiveCanvasId] = useState(
+    workspace.canvases[0].id,
+  );
   const activeCanvas =
     workspace.canvases.find((canvas) => canvas.id === activeCanvasId) ??
     workspace.canvases[0];
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  const [relationshipChooser, setRelationshipChooser] =
+    useState<RelationshipChooser>(null);
+  const flowFrameRef = useRef<HTMLDivElement>(null);
+
+  const nodes: DiagramNode[] = activeCanvas.classes.map(
+    ({ id, position, ...data }) => ({
+      id,
+      type: "class",
+      position,
+      data,
+      selected: selectedNodeIds.includes(id),
+    }),
+  );
+  const relationshipPairIndexes = new Map<string, number>();
+  const edges: DiagramEdge[] = activeCanvas.relationships.map(
+    (relationship) => {
+      const key = [relationship.sourceId, relationship.targetId]
+        .sort()
+        .join("::");
+      const pairIndex = relationshipPairIndexes.get(key) ?? 0;
+      relationshipPairIndexes.set(key, pairIndex + 1);
+      const direction =
+        relationship.sourceId.localeCompare(relationship.targetId) <= 0
+          ? 1
+          : -1;
+      return {
+        id: relationship.id,
+        type: "umlRelationship",
+        source: relationship.sourceId,
+        target: relationship.targetId,
+        sourceHandle: relationship.sourceHandle,
+        targetHandle: relationship.targetHandle,
+        data: {
+          kind: relationship.kind,
+          curveOffset: direction * (18 + pairIndex * 24),
+        },
+        selected: selectedEdgeIds.includes(relationship.id),
+      };
+    },
+  );
 
   const updateActiveCanvas = useCallback(
-    (update: (canvas: DiagramCanvas) => DiagramCanvas) => {
-      setWorkspace((current) => ({
-        ...current,
-        canvases: current.canvases.map((canvas) =>
-          canvas.id === activeCanvasId ? update(canvas) : canvas,
-        ),
-      }));
+    (update: (canvas: UMLCanvas) => UMLCanvas) => {
+      setWorkspace((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          canvases: current.canvases.map((canvas) =>
+            canvas.id === activeCanvasId ? update(canvas) : canvas,
+          ),
+        };
+      });
     },
-    [activeCanvasId],
+    [activeCanvasId, setWorkspace],
   );
 
   const updateClassData = useCallback(
@@ -123,8 +143,10 @@ function EditorWorkspace() {
     ) => {
       updateActiveCanvas((canvas) => ({
         ...canvas,
-        nodes: canvas.nodes.map((node) =>
-          node.id === nodeId ? { ...node, data: update(node.data) } : node,
+        classes: canvas.classes.map((umlClass) =>
+          umlClass.id === nodeId
+            ? { ...umlClass, ...update(umlClass) }
+            : umlClass,
         ),
       }));
     },
@@ -133,19 +155,37 @@ function EditorWorkspace() {
 
   const onNodesChange = useCallback(
     (changes: NodeChange<DiagramNode>[]) => {
+      const positions = new Map<string, { x: number; y: number }>();
+      for (const change of changes) {
+        if (change.type === "position" && change.position) {
+          positions.set(change.id, change.position);
+        }
+      }
+      if (positions.size === 0) return;
       updateActiveCanvas((canvas) => ({
         ...canvas,
-        nodes: applyNodeChanges(changes, canvas.nodes) as DiagramNode[],
+        classes: canvas.classes.map((umlClass) => {
+          const position = positions.get(umlClass.id);
+          return position ? { ...umlClass, position } : umlClass;
+        }),
       }));
     },
     [updateActiveCanvas],
   );
 
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => {
+    (changes: EdgeChange<DiagramEdge>[]) => {
+      const removedIds = new Set(
+        changes
+          .filter((change) => change.type === "remove")
+          .map((change) => change.id),
+      );
+      if (removedIds.size === 0) return;
       updateActiveCanvas((canvas) => ({
         ...canvas,
-        edges: applyEdgeChanges(changes, canvas.edges),
+        relationships: canvas.relationships.filter(
+          (relationship) => !removedIds.has(relationship.id),
+        ),
       }));
     },
     [updateActiveCanvas],
@@ -153,116 +193,212 @@ function EditorWorkspace() {
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      // Append directly so parallel connections between the same handles are kept.
-      updateActiveCanvas((canvas) => ({
-        ...canvas,
-        edges: [
-          ...canvas.edges,
-          {
-            ...connection,
-            id: createId("relationship"),
-            label: "association",
-            ...relationshipEdgeOptions,
-          },
-        ],
-      }));
+      if (connection.source && connection.target) {
+        setRelationshipChooser({ mode: "create", connection });
+      }
     },
-    [updateActiveCanvas],
+    [],
   );
 
   const onSelectionChange = useCallback(
-    ({ edges: selectedEdges }: { nodes: DiagramNode[]; edges: Edge[] }) => {
+    ({
+      nodes: selectedNodes,
+      edges: selectedEdges,
+    }: {
+      nodes: DiagramNode[];
+      edges: DiagramEdge[];
+    }) => {
+      setSelectedNodeIds(selectedNodes.map((node) => node.id));
       setSelectedEdgeIds(selectedEdges.map((edge) => edge.id));
     },
     [],
   );
 
-  const deleteSelectedEdges = useCallback(() => {
-    if (selectedEdgeIds.length === 0) return;
+  const deleteSelected = useCallback(() => {
+    if (selectedNodeIds.length > 1) {
+      const count = selectedNodeIds.length;
+      if (!window.confirm(`Delete these ${count} classes and their relationships?`)) {
+        return;
+      }
+    }
+    if (selectedNodeIds.length === 0 && selectedEdgeIds.length === 0) return;
+    const nodeIds = new Set(selectedNodeIds);
+    const relationshipIds = new Set(selectedEdgeIds);
     updateActiveCanvas((canvas) => ({
       ...canvas,
-      edges: canvas.edges.filter((edge) => !selectedEdgeIds.includes(edge.id)),
+      classes: canvas.classes.filter((umlClass) => !nodeIds.has(umlClass.id)),
+      relationships: canvas.relationships.filter(
+        (relationship) =>
+          !relationshipIds.has(relationship.id) &&
+          !nodeIds.has(relationship.sourceId) &&
+          !nodeIds.has(relationship.targetId),
+      ),
     }));
+    setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
-  }, [selectedEdgeIds, updateActiveCanvas]);
+  }, [selectedEdgeIds, selectedNodeIds, updateActiveCanvas]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Delete" && event.key !== "Backspace") return;
-
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        (target.isContentEditable || target.matches("input, textarea, [contenteditable='true']"))
+        (target.isContentEditable ||
+          target.matches("input, textarea, select, [contenteditable='true']") ||
+          target.closest(".class-node__member--editing"))
       ) {
         return;
       }
 
-      if (selectedEdgeIds.length === 0) return;
-      event.preventDefault();
-      deleteSelectedEdges();
+      const canvasHasFocus =
+        target instanceof globalThis.Node &&
+        Boolean(flowFrameRef.current?.contains(target));
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "a" &&
+        canvasHasFocus
+      ) {
+        event.preventDefault();
+        setSelectedNodeIds(activeCanvas.classes.map((umlClass) => umlClass.id));
+        setSelectedEdgeIds(
+          activeCanvas.relationships.map((relationship) => relationship.id),
+        );
+        return;
+      }
+
+      if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        canvasHasFocus &&
+        (selectedNodeIds.length > 0 || selectedEdgeIds.length > 0)
+      ) {
+        event.preventDefault();
+        deleteSelected();
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [deleteSelectedEdges, selectedEdgeIds.length]);
+  }, [
+    activeCanvas.classes,
+    activeCanvas.relationships,
+    deleteSelected,
+    selectedEdgeIds.length,
+    selectedNodeIds.length,
+  ]);
 
   const addClass = () => {
-    const id = `class-${Date.now()}`;
+    const id = createId("class");
     updateActiveCanvas((canvas) => ({
       ...canvas,
-      nodes: [
-        ...canvas.nodes,
+      classes: [
+        ...canvas.classes,
         {
           id,
-          type: "class",
           position: {
-            x: 220 + (canvas.nodes.length % 4) * 50,
-            y: 130 + (canvas.nodes.length % 4) * 50,
+            x: 160 + (canvas.classes.length % 4) * 55,
+            y: 120 + (canvas.classes.length % 4) * 50,
           },
-          data: { name: "New Class", attributes: [], methods: [] },
+          name: "NewClass",
+          attributes: [],
+          methods: [],
         },
       ],
     }));
+    setSelectedNodeIds([id]);
   };
 
   const addCanvas = () => {
-    const canvas: DiagramCanvas = {
+    const existingNames = new Set(workspace.canvases.map((canvas) => canvas.name));
+    let index = 1;
+    while (existingNames.has(`Canvas ${index}`)) index += 1;
+    const canvas: UMLCanvas = {
       id: createId("canvas"),
-      name: `Canvas ${workspace.canvases.length + 1}`,
-      nodes: [],
-      edges: [],
+      name: `Canvas ${index}`,
+      classes: [],
+      relationships: [],
     };
     setWorkspace((current) => ({
-      ...current,
-      canvases: [
-        ...current.canvases.map((item) => ({
-          ...item,
-          nodes: item.nodes.map((node) => ({ ...node, selected: false })),
-          edges: item.edges.map((edge) => ({ ...edge, selected: false })),
-        })),
-        canvas,
-      ],
+      ...current!,
+      canvases: [...current!.canvases, canvas],
     }));
     setActiveCanvasId(canvas.id);
+    setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
+    setRelationshipChooser(null);
   };
 
   const selectCanvas = (canvasId: string) => {
-    setWorkspace((current) => ({
-      ...current,
-      canvases: current.canvases.map((canvas) => ({
-        ...canvas,
-        nodes: canvas.nodes.map((node) => ({ ...node, selected: false })),
-        edges: canvas.edges.map((edge) => ({ ...edge, selected: false })),
-      })),
-    }));
     setActiveCanvasId(canvasId);
+    setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
+    setRelationshipChooser(null);
   };
 
-  const renameCanvas = (name: string) => {
-    updateActiveCanvas((canvas) => ({ ...canvas, name }));
+  const renameCanvas = (canvas: UMLCanvas) => {
+    const nextName = window.prompt("Rename canvas", canvas.name);
+    if (!nextName?.trim()) return;
+    setWorkspace((current) => ({
+      ...current!,
+      canvases: current!.canvases.map((item) =>
+        item.id === canvas.id ? { ...item, name: nextName.trim() } : item,
+      ),
+    }));
+  };
+
+  const deleteCanvas = (canvas: UMLCanvas) => {
+    if (workspace.canvases.length <= 1) return;
+    if (
+      (canvas.classes.length > 0 || canvas.relationships.length > 0) &&
+      !window.confirm(`Delete "${canvas.name}" and its diagram content?`)
+    ) {
+      return;
+    }
+    const remaining = workspace.canvases.filter((item) => item.id !== canvas.id);
+    setWorkspace((current) => ({ ...current!, canvases: remaining }));
+    if (canvas.id === activeCanvasId) setActiveCanvasId(remaining[0].id);
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds([]);
+    setRelationshipChooser(null);
+  };
+
+  const openRelationshipEditor = () => {
+    if (selectedEdgeIds.length !== 1) return;
+    setRelationshipChooser({
+      mode: "edit",
+      relationshipId: selectedEdgeIds[0],
+    });
+  };
+
+  const chooseRelationshipKind = (kind: UMLRelationshipKind) => {
+    if (!relationshipChooser) return;
+    if (relationshipChooser.mode === "create") {
+      const { connection } = relationshipChooser;
+      if (!connection.source || !connection.target) return;
+      const relationship: UMLRelationship = {
+        id: createId("relationship"),
+        sourceId: connection.source,
+        targetId: connection.target,
+        sourceHandle: connection.sourceHandle,
+        targetHandle: connection.targetHandle,
+        kind,
+      };
+      updateActiveCanvas((canvas) => ({
+        ...canvas,
+        relationships: [...canvas.relationships, relationship],
+      }));
+      setSelectedEdgeIds([relationship.id]);
+      setSelectedNodeIds([]);
+    } else {
+      updateActiveCanvas((canvas) => ({
+        ...canvas,
+        relationships: canvas.relationships.map((relationship) =>
+          relationship.id === relationshipChooser.relationshipId
+            ? { ...relationship, kind }
+            : relationship,
+        ),
+      }));
+    }
+    setRelationshipChooser(null);
   };
 
   return (
@@ -270,8 +406,8 @@ function EditorWorkspace() {
       <header className="topbar">
         <Brand />
         <div className="workspace-title">
-          <span>{workspace.name}</span>
-          <strong>{activeCanvas.name}</strong>
+          <span>WORKSPACE</span>
+          <strong>{workspace.name}</strong>
         </div>
         <div className="topbar-spacer" />
         <span className="save-state">
@@ -288,120 +424,139 @@ function EditorWorkspace() {
         </button>
       </header>
 
-      <div className="workspace">
-        <aside className="workspace-sidebar" aria-label="Workspace and canvases">
-          <label className="workspace-name-field">
-            <span className="eyebrow">WORKSPACE</span>
-            <input
-              aria-label="Workspace name"
-              value={workspace.name}
-              onChange={(event) =>
-                setWorkspace((current) => ({
-                  ...current,
-                  name: event.target.value,
-                }))
-              }
-            />
-          </label>
-
-          <div className="canvas-list-heading">
+      <div className="editor-layout">
+        <div className="editor-toolbar" aria-label="Workspace tools">
+          <div className="toolbar-caption">
             <span>CANVASES</span>
-            <button
-              className="add-canvas-button"
-              type="button"
-              onClick={addCanvas}
-              aria-label="Create a new canvas"
-              title="Create a new canvas"
-            >
-              +
-            </button>
+            <strong>{workspace.name}</strong>
           </div>
-          <nav className="canvas-list" aria-label="Workspace canvases">
+          <nav className="canvas-tabs" aria-label="Workspace canvases">
             {workspace.canvases.map((canvas) => (
-              <button
-                className={`canvas-list-item${canvas.id === activeCanvasId ? " canvas-list-item--active" : ""}`}
-                type="button"
+              <div
+                className={`canvas-tab${canvas.id === activeCanvasId ? " canvas-tab--active" : ""}`}
                 key={canvas.id}
-                onClick={() => selectCanvas(canvas.id)}
-                aria-current={canvas.id === activeCanvasId ? "page" : undefined}
               >
-                <span className="canvas-list-icon" aria-hidden="true">▱</span>
-                <span className="canvas-list-name">{canvas.name || "Untitled canvas"}</span>
-              </button>
+                <button
+                  className="canvas-tab__select"
+                  type="button"
+                  onClick={() => selectCanvas(canvas.id)}
+                  onDoubleClick={() => renameCanvas(canvas)}
+                  aria-current={canvas.id === activeCanvasId ? "page" : undefined}
+                  title="Click to switch; double-click to rename"
+                >
+                  {canvas.name}
+                </button>
+                {workspace.canvases.length > 1 && (
+                  <button
+                    className="canvas-tab__delete"
+                    type="button"
+                    aria-label={`Delete ${canvas.name}`}
+                    title="Delete canvas"
+                    onClick={() => deleteCanvas(canvas)}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             ))}
           </nav>
-
-          <div className="sidebar-tools-heading">TOOLS</div>
           <button
-            className="tool-button add-tool"
+            className="toolbar-add-canvas"
             type="button"
-            onClick={addClass}
-            title="Add a class to this canvas"
+            onClick={addCanvas}
+            aria-label="Create a new canvas"
+            title="Create a new canvas"
           >
-            <span>＋</span>
-            <small>Class</small>
+            +
           </button>
-          <div className="toolbar-note">
-            Drag nodes to arrange them. Connect the handles to show a relationship.
+          <span className="toolbar-divider" />
+          <div className="toolbar-actions">
+            <button className="toolbar-action toolbar-action--primary" type="button" onClick={addClass}>
+              <span aria-hidden="true">＋</span> Add class
+            </button>
+            {(selectedNodeIds.length > 0 || selectedEdgeIds.length > 0) && (
+              <button className="toolbar-action toolbar-action--danger" type="button" onClick={deleteSelected}>
+                Delete selected
+              </button>
+            )}
+            {selectedEdgeIds.length === 1 && (
+              <button className="toolbar-action" type="button" onClick={openRelationshipEditor}>
+                Change relationship type
+              </button>
+            )}
           </div>
-        </aside>
+        </div>
 
-        <section className="canvas-area" aria-label="Diagram canvas">
-          <div className="canvas-heading">
-            <div>
-              <p className="eyebrow">DIAGRAM CANVAS</p>
-              <h1>
-                <input
-                  className="canvas-name-input"
-                  aria-label="Canvas name"
-                  value={activeCanvas.name}
-                  onChange={(event) => renameCanvas(event.target.value)}
-                />
-              </h1>
-            </div>
-            <span className="canvas-hint">
-              Changes are held in this browser session
-            </span>
-            <div className="canvas-actions">
-              {selectedEdgeIds.length > 0 && (
-                <button className="panel-action panel-action--danger" type="button" onClick={deleteSelectedEdges}>
-                  Delete connection{selectedEdgeIds.length > 1 ? "s" : ""}
-                </button>
-              )}
-            </div>
+        <section
+          className="flow-frame"
+          ref={flowFrameRef}
+          tabIndex={0}
+          aria-label="Diagram canvas"
+          onPointerDown={(event) => {
+            if (
+              event.target instanceof HTMLElement &&
+              event.target.closest("input, textarea, select")
+            ) {
+              return;
+            }
+            flowFrameRef.current?.focus({ preventScroll: true });
+          }}
+        >
+          <ClassNodeActionsContext.Provider value={{ updateClassData }}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onSelectionChange={onSelectionChange}
+              connectionLineType={ConnectionLineType.Bezier}
+              defaultEdgeOptions={{ type: "umlRelationship" }}
+              deleteKeyCode={null}
+              selectionOnDrag
+              selectionKeyCode="Shift"
+              multiSelectionKeyCode="Shift"
+              edgesFocusable
+              elementsSelectable
+              fitView
+              fitViewOptions={{ padding: 0.25 }}
+              minZoom={0.25}
+              maxZoom={1.8}
+            >
+              <Background color="#dfe4eb" gap={22} size={1} />
+              <Controls position="bottom-left" showFitView={false} />
+              <MiniMap
+                position="bottom-right"
+                nodeColor="#97a7c1"
+                maskColor="rgb(247 248 250 / 65%)"
+              />
+              <FitViewButton />
+            </ReactFlow>
+          </ClassNodeActionsContext.Provider>
+          <div className="canvas-legend">
+            <span className="legend-line" /> UML relationships
           </div>
-          <div className="flow-frame">
-            <ClassNodeActionsContext.Provider value={{ updateClassData }}>
-              <ReactFlow
-                nodes={activeCanvas.nodes}
-                edges={activeCanvas.edges}
-                nodeTypes={nodeTypes}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                onSelectionChange={onSelectionChange}
-                deleteKeyCode={null}
-                edgesFocusable
-                elementsSelectable
-                fitView
-                fitViewOptions={{ padding: 0.25 }}
-                defaultEdgeOptions={relationshipEdgeOptions}
-                minZoom={0.25}
-                maxZoom={1.8}
-              >
-                <Background color="#dfe4eb" gap={22} size={1} />
-                <Controls position="bottom-left" />
-                <MiniMap
-                  position="bottom-right"
-                  nodeColor="#97a7c1"
-                  maskColor="rgb(247 248 250 / 65%)"
-                />
-              </ReactFlow>
-            </ClassNodeActionsContext.Provider>
-            <div className="canvas-legend">
-              <span className="legend-line" /> Relationship
-            </div>
-          </div>
+          {relationshipChooser && (
+            <RelationshipTypePopover
+              title={
+                relationshipChooser.mode === "create"
+                  ? "Choose relationship type"
+                  : "Change relationship type"
+              }
+              initialKind={
+                relationshipChooser.mode === "edit"
+                  ? activeCanvas.relationships.find(
+                      (relationship) =>
+                        relationship.id === relationshipChooser.relationshipId,
+                    )?.kind
+                  : undefined
+              }
+              onSelect={chooseRelationshipKind}
+              onCancel={() => setRelationshipChooser(null)}
+            />
+          )}
         </section>
       </div>
     </main>
@@ -409,10 +564,73 @@ function EditorWorkspace() {
 }
 
 function App() {
-  return window.location.pathname === "/editor" ? (
-    <EditorWorkspace />
-  ) : (
-    <LandingPage />
+  const [path, setPath] = useState(window.location.pathname);
+  const [workspace, setWorkspace] = useState<UMLWorkspace | null>(null);
+  const [showWorkspaceDialog, setShowWorkspaceDialog] = useState(false);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const nextPath = window.location.pathname;
+      setPath(nextPath);
+      if (nextPath !== "/editor") setShowWorkspaceDialog(false);
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const navigateToEditor = () => {
+    window.history.pushState({}, "", "/editor");
+    setPath("/editor");
+  };
+
+  const startDesigning = () => {
+    if (workspace) {
+      navigateToEditor();
+      return;
+    }
+    setShowWorkspaceDialog(true);
+  };
+
+  const createWorkspace = (name: string) => {
+    const newWorkspace: UMLWorkspace = {
+      id: createId("workspace"),
+      name,
+      canvases: [
+        {
+          id: createId("canvas"),
+          name: "Canvas 1",
+          classes: [],
+          relationships: [],
+        },
+      ],
+    };
+    setWorkspace(newWorkspace);
+    setShowWorkspaceDialog(false);
+    navigateToEditor();
+  };
+
+  const cancelWorkspaceCreation = () => {
+    setShowWorkspaceDialog(false);
+    if (path === "/editor") {
+      window.history.pushState({}, "", "/");
+      setPath("/");
+    }
+  };
+
+  if (path === "/editor" && workspace) {
+    return <EditorWorkspace workspace={workspace} setWorkspace={setWorkspace} />;
+  }
+
+  return (
+    <>
+      <LandingPage onStartDesigning={startDesigning} />
+      {(showWorkspaceDialog || path === "/editor") && !workspace && (
+        <WorkspaceCreationDialog
+          onCreate={createWorkspace}
+          onCancel={cancelWorkspaceCreation}
+        />
+      )}
+    </>
   );
 }
 
