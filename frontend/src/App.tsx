@@ -13,6 +13,7 @@ import {
   MiniMap,
   Panel,
   ReactFlow,
+  applyNodeChanges,
   useReactFlow,
   type Connection,
   type EdgeChange,
@@ -31,6 +32,7 @@ import UMLRelationshipEdge, {
 import WorkspaceCreationDialog from "./components/WorkspaceCreationDialog";
 import type {
   UMLCanvas,
+  UMLClass,
   UMLClassNodeData,
   UMLRelationship,
   UMLRelationshipKind,
@@ -46,6 +48,11 @@ type RelationshipChooser =
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function toFlowNode(umlClass: UMLClass): DiagramNode {
+  const { id, position, ...data } = umlClass;
+  return { id, type: "class", position, data };
 }
 
 const nodeTypes = { class: ClassNode };
@@ -78,23 +85,15 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
   const activeCanvas =
     workspace.canvases.find((canvas) => canvas.id === activeCanvasId) ??
     workspace.canvases[0];
+  const [nodes, setNodes] = useState<DiagramNode[]>(() =>
+    activeCanvas.classes.map(toFlowNode),
+  );
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
-  const [draggingNodeIds, setDraggingNodeIds] = useState<string[]>([]);
   const [relationshipChooser, setRelationshipChooser] =
     useState<RelationshipChooser>(null);
   const flowFrameRef = useRef<HTMLDivElement>(null);
 
-  const nodes: DiagramNode[] = activeCanvas.classes.map(
-    ({ id, position, ...data }) => ({
-      id,
-      type: "class",
-      position,
-      data,
-      selected: selectedNodeIds.includes(id),
-      dragging: draggingNodeIds.includes(id),
-    }),
-  );
   const relationshipPairIndexes = new Map<string, number>();
   const edges: DiagramEdge[] = activeCanvas.relationships.map(
     (relationship) => {
@@ -151,41 +150,38 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
             : umlClass,
         ),
       }));
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === nodeId
+            ? { ...node, data: update(node.data) }
+            : node,
+        ),
+      );
     },
     [updateActiveCanvas],
   );
 
+  useEffect(() => {
+    setNodes(activeCanvas.classes.map(toFlowNode));
+  }, [activeCanvasId]);
+
   const onNodesChange = useCallback(
     (changes: NodeChange<DiagramNode>[]) => {
-      const positions = new Map<string, { x: number; y: number }>();
-      const dragStates = new Map<string, boolean>();
-      for (const change of changes) {
-        if (change.type === "position" && change.position) {
-          positions.set(change.id, change.position);
-        }
-        if (change.type === "position" && change.dragging !== undefined) {
-          dragStates.set(change.id, change.dragging);
-        }
-      }
-      if (dragStates.size > 0) {
-        setDraggingNodeIds((current) => {
-          const next = new Set(current);
-          for (const [id, isDragging] of dragStates) {
-            if (isDragging) next.add(id);
-            else next.delete(id);
-          }
-          return [...next];
-        });
-      }
-      if (positions.size > 0) {
-        updateActiveCanvas((canvas) => ({
-          ...canvas,
-          classes: canvas.classes.map((umlClass) => {
-            const position = positions.get(umlClass.id);
-            return position ? { ...umlClass, position } : umlClass;
-          }),
-        }));
-      }
+      setNodes((current) => applyNodeChanges(changes, current));
+    },
+    [],
+  );
+
+  const onNodeDragStop = useCallback(
+    (_event: MouseEvent | TouchEvent, node: DiagramNode) => {
+      updateActiveCanvas((canvas) => ({
+        ...canvas,
+        classes: canvas.classes.map((umlClass) =>
+          umlClass.id === node.id
+            ? { ...umlClass, position: node.position }
+            : umlClass,
+        ),
+      }));
     },
     [updateActiveCanvas],
   );
@@ -251,6 +247,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
           !nodeIds.has(relationship.targetId),
       ),
     }));
+    setNodes((current) => current.filter((node) => !nodeIds.has(node.id)));
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
   }, [selectedEdgeIds, selectedNodeIds, updateActiveCanvas]);
@@ -289,6 +286,9 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
       ) {
         event.preventDefault();
         setSelectedNodeIds(activeCanvas.classes.map((umlClass) => umlClass.id));
+        setNodes((current) =>
+          current.map((node) => ({ ...node, selected: true })),
+        );
         setSelectedEdgeIds(
           activeCanvas.relationships.map((relationship) => relationship.id),
         );
@@ -317,22 +317,33 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
 
   const addClass = () => {
     const id = createId("class");
+    const position = {
+      x: 160 + (activeCanvas.classes.length % 4) * 55,
+      y: 120 + (activeCanvas.classes.length % 4) * 50,
+    };
     updateActiveCanvas((canvas) => ({
       ...canvas,
       classes: [
         ...canvas.classes,
         {
           id,
-          position: {
-            x: 160 + (canvas.classes.length % 4) * 55,
-            y: 120 + (canvas.classes.length % 4) * 50,
-          },
+          position,
           name: "NewClass",
           attributes: [],
           methods: [],
         },
       ],
     }));
+    setNodes((current) => [
+      ...current.map((node) => ({ ...node, selected: false })),
+      {
+        id,
+        type: "class",
+        position,
+        data: { name: "NewClass", attributes: [], methods: [] },
+        selected: true,
+      },
+    ]);
     setSelectedNodeIds([id]);
   };
 
@@ -351,6 +362,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
       canvases: [...current!.canvases, canvas],
     }));
     setActiveCanvasId(canvas.id);
+    setNodes([]);
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
     setRelationshipChooser(null);
@@ -358,6 +370,8 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
 
   const selectCanvas = (canvasId: string) => {
     setActiveCanvasId(canvasId);
+    const canvas = workspace.canvases.find((item) => item.id === canvasId);
+    if (canvas) setNodes(canvas.classes.map(toFlowNode));
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
     setRelationshipChooser(null);
@@ -384,7 +398,10 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     }
     const remaining = workspace.canvases.filter((item) => item.id !== canvas.id);
     setWorkspace((current) => ({ ...current!, canvases: remaining }));
-    if (canvas.id === activeCanvasId) setActiveCanvasId(remaining[0].id);
+    if (canvas.id === activeCanvasId) {
+      setActiveCanvasId(remaining[0].id);
+      setNodes(remaining[0].classes.map(toFlowNode));
+    }
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
     setRelationshipChooser(null);
@@ -547,6 +564,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               onNodesChange={onNodesChange}
+              onNodeDragStop={onNodeDragStop}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onSelectionChange={onSelectionChange}
