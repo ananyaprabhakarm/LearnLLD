@@ -153,6 +153,8 @@ activemq-data/
 .DS_Store
 node_modules/
 .vite/
+backend/*.db
+backend/*.db-*
 .env
 .envrc
 .venv
