@@ -80,6 +80,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     workspace.canvases[0];
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  const [draggingNodeIds, setDraggingNodeIds] = useState<string[]>([]);
   const [relationshipChooser, setRelationshipChooser] =
     useState<RelationshipChooser>(null);
   const flowFrameRef = useRef<HTMLDivElement>(null);
@@ -91,6 +92,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
       position,
       data,
       selected: selectedNodeIds.includes(id),
+      dragging: draggingNodeIds.includes(id),
     }),
   );
   const relationshipPairIndexes = new Map<string, number>();
@@ -156,19 +158,34 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
   const onNodesChange = useCallback(
     (changes: NodeChange<DiagramNode>[]) => {
       const positions = new Map<string, { x: number; y: number }>();
+      const dragStates = new Map<string, boolean>();
       for (const change of changes) {
         if (change.type === "position" && change.position) {
           positions.set(change.id, change.position);
         }
+        if (change.type === "position" && change.dragging !== undefined) {
+          dragStates.set(change.id, change.dragging);
+        }
       }
-      if (positions.size === 0) return;
-      updateActiveCanvas((canvas) => ({
-        ...canvas,
-        classes: canvas.classes.map((umlClass) => {
-          const position = positions.get(umlClass.id);
-          return position ? { ...umlClass, position } : umlClass;
-        }),
-      }));
+      if (dragStates.size > 0) {
+        setDraggingNodeIds((current) => {
+          const next = new Set(current);
+          for (const [id, isDragging] of dragStates) {
+            if (isDragging) next.add(id);
+            else next.delete(id);
+          }
+          return [...next];
+        });
+      }
+      if (positions.size > 0) {
+        updateActiveCanvas((canvas) => ({
+          ...canvas,
+          classes: canvas.classes.map((umlClass) => {
+            const position = positions.get(umlClass.id);
+            return position ? { ...umlClass, position } : umlClass;
+          }),
+        }));
+      }
     },
     [updateActiveCanvas],
   );

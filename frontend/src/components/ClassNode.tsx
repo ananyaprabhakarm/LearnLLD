@@ -256,12 +256,14 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
           }}
         />
       ) : (
-        <div
-          className="class-node__header nodrag"
-          title="Double-click to edit class name"
-          onDoubleClick={beginNameEdit}
-        >
-          {data.name || "Untitled class"}
+        <div className="class-node__header">
+          <span
+            className="class-node__name nodrag"
+            title="Double-click to edit class name"
+            onDoubleClick={beginNameEdit}
+          >
+            {data.name || "Untitled class"}
+          </span>
         </div>
       )}
 

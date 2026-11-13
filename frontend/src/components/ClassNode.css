@@ -27,7 +27,7 @@
   font: 600 13px 'DM Sans', sans-serif;
 }
 
-.class-node__header[title] {
+.class-node__name {
   cursor: text;
 }
 
