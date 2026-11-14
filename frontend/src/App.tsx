@@ -48,6 +48,10 @@ type RelationshipChooser =
   | { mode: "create"; connection: Connection; position: PopupPosition }
   | { mode: "edit"; relationshipId: string; position: PopupPosition }
   | null;
+type DiagramClipboard = {
+  classes: UMLClass[];
+  relationships: UMLRelationship[];
+};
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -151,7 +155,9 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
   } | null>(null);
   const [relationshipChooser, setRelationshipChooser] =
     useState<RelationshipChooser>(null);
+  const [clipboard, setClipboard] = useState<DiagramClipboard | null>(null);
   const flowFrameRef = useRef<HTMLDivElement>(null);
+  const pasteCountRef = useRef(0);
 
   const relationshipPairIndexes = new Map<string, number>();
   const edges: DiagramEdge[] = activeCanvas.relationships.map(
@@ -228,6 +234,23 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     );
   }, [activeCanvasId]);
 
+  useEffect(() => {
+    if (!relationshipChooser) return;
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".relationship-popover")
+      ) {
+        return;
+      }
+      setRelationshipChooser(null);
+      setPendingSource(null);
+    };
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  }, [relationshipChooser]);
+
   const onNodesChange = useCallback(
     (changes: NodeChange<DiagramNode>[]) => {
       setNodes((current) => applyNodeChanges(changes, current));
@@ -257,12 +280,16 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
           .map((change) => change.id),
       );
       if (removedIds.size === 0) return;
+      const relationships = activeCanvas.relationships.filter(
+        (relationship) => !removedIds.has(relationship.id),
+      );
       updateActiveCanvas((canvas) => ({
         ...canvas,
-        relationships: canvas.relationships.filter(
-          (relationship) => !removedIds.has(relationship.id),
-        ),
+        relationships,
       }));
+      setNodes((current) =>
+        current.map((node) => withRelationshipHandles(node, relationships)),
+      );
     },
     [updateActiveCanvas],
   );
@@ -318,6 +345,27 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     [],
   );
 
+  const onEdgeClick = useCallback(
+    (event: React.MouseEvent, edge: DiagramEdge) => {
+      setSelectedNodeIds([]);
+      setSelectedEdgeIds([edge.id]);
+      setRelationshipChooser({
+        mode: "edit",
+        relationshipId: edge.id,
+        position: popupPositionAt(event.clientX, event.clientY),
+      });
+    },
+    [popupPositionAt],
+  );
+
+  const selectAll = useCallback(() => {
+    setSelectedNodeIds(activeCanvas.classes.map((umlClass) => umlClass.id));
+    setNodes((current) => current.map((node) => ({ ...node, selected: true })));
+    setSelectedEdgeIds(
+      activeCanvas.relationships.map((relationship) => relationship.id),
+    );
+  }, [activeCanvas.classes, activeCanvas.relationships]);
+
   const deleteSelected = useCallback(() => {
     if (selectedNodeIds.length > 1) {
       const count = selectedNodeIds.length;
@@ -346,18 +394,100 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
   const deleteSelectedConnections = useCallback(() => {
     if (selectedEdgeIds.length === 0) return;
     const relationshipIds = new Set(selectedEdgeIds);
+    const relationships = activeCanvas.relationships.filter(
+      (relationship) => !relationshipIds.has(relationship.id),
+    );
     updateActiveCanvas((canvas) => ({
       ...canvas,
-      relationships: canvas.relationships.filter(
-        (relationship) => !relationshipIds.has(relationship.id),
-      ),
+      relationships,
     }));
+    setNodes((current) =>
+      current.map((node) => withRelationshipHandles(node, relationships)),
+    );
     setSelectedEdgeIds([]);
-  }, [selectedEdgeIds, updateActiveCanvas]);
+  }, [activeCanvas.relationships, selectedEdgeIds, updateActiveCanvas]);
+
+  const copySelected = useCallback(() => {
+    const selectedIds = new Set(selectedNodeIds);
+    const classes = activeCanvas.classes
+      .filter((umlClass) => selectedIds.has(umlClass.id))
+      .map(cloneUMLClass);
+    if (classes.length === 0) return;
+    const relationships = activeCanvas.relationships
+      .filter(
+        (relationship) =>
+          selectedIds.has(relationship.sourceId) &&
+          selectedIds.has(relationship.targetId),
+      )
+      .map((relationship) => ({ ...relationship }));
+    setClipboard({ classes, relationships });
+    pasteCountRef.current = 0;
+  }, [activeCanvas.classes, activeCanvas.relationships, selectedNodeIds]);
+
+  const pasteCopied = useCallback(() => {
+    if (!clipboard || clipboard.classes.length === 0) return;
+    pasteCountRef.current += 1;
+    const offset = pasteCountRef.current * 36;
+    const idMap = new Map(
+      clipboard.classes.map((umlClass) => [umlClass.id, createId("class")]),
+    );
+    const classes = clipboard.classes.map((umlClass) => ({
+      ...umlClass,
+      id: idMap.get(umlClass.id)!,
+      position: {
+        x: umlClass.position.x + offset,
+        y: umlClass.position.y + offset,
+      },
+      attributes: umlClass.attributes.map((attribute) => ({
+        ...attribute,
+        id: createId("attribute"),
+      })),
+      methods: umlClass.methods.map((method) => ({
+        ...method,
+        id: createId("method"),
+      })),
+    }));
+    const relationships = clipboard.relationships
+      .filter(
+        (relationship) =>
+          idMap.has(relationship.sourceId) && idMap.has(relationship.targetId),
+      )
+      .map((relationship) => ({
+        ...relationship,
+        id: createId("relationship"),
+        sourceId: idMap.get(relationship.sourceId)!,
+        targetId: idMap.get(relationship.targetId)!,
+      }));
+    const pastedNodeIds = classes.map((umlClass) => umlClass.id);
+    const pastedRelationshipIds = relationships.map(
+      (relationship) => relationship.id,
+    );
+
+    updateActiveCanvas((canvas) => ({
+      ...canvas,
+      classes: [...canvas.classes, ...classes],
+      relationships: [...canvas.relationships, ...relationships],
+    }));
+    setNodes((current) => [
+      ...current.map((node) => ({ ...node, selected: false })),
+      ...classes.map((umlClass) => ({
+        ...toFlowNode(umlClass, relationships),
+        selected: true,
+      })),
+    ]);
+    setSelectedNodeIds(pastedNodeIds);
+    setSelectedEdgeIds(pastedRelationshipIds);
+  }, [clipboard, updateActiveCanvas]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
+      if (event.key === "Escape" && relationshipChooser?.mode === "create") {
+        event.preventDefault();
+        setRelationshipChooser(null);
+        setPendingSource(null);
+        return;
+      }
       if (
         target instanceof HTMLElement &&
         (target.isContentEditable ||
@@ -529,6 +659,20 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     });
   };
 
+  const deleteRelationship = (relationshipId: string) => {
+    const relationships = activeCanvas.relationships.filter(
+      (relationship) => relationship.id !== relationshipId,
+    );
+    updateActiveCanvas((canvas) => ({ ...canvas, relationships }));
+    setNodes((current) =>
+      current.map((node) => withRelationshipHandles(node, relationships)),
+    );
+    setSelectedEdgeIds((current) =>
+      current.filter((id) => id !== relationshipId),
+    );
+    setRelationshipChooser(null);
+  };
+
   const chooseRelationshipKind = (kind: UMLRelationshipKind) => {
     if (!relationshipChooser) return;
     if (relationshipChooser.mode === "create") {
@@ -685,7 +829,11 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
               onNodesChange={onNodesChange}
               onNodeDragStop={onNodeDragStop}
               onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
+              onEdgeClick={onEdgeClick}
+              onPaneClick={() => {
+                setPendingSource(null);
+                setRelationshipChooser(null);
+              }}
               onSelectionChange={onSelectionChange}
               connectionLineType={ConnectionLineType.Bezier}
               defaultEdgeOptions={{ type: "umlRelationship" }}
@@ -715,11 +863,21 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
           </div>
           {relationshipChooser && (
             <RelationshipTypePopover
+              key={
+                relationshipChooser.mode === "create"
+                  ? `create-${relationshipChooser.connection.source}-${relationshipChooser.connection.target}`
+                  : `edit-${relationshipChooser.relationshipId}`
+              }
               title={
                 relationshipChooser.mode === "create"
                   ? "Choose relationship type"
-                  : "Change relationship type"
+                  : "Manage connection"
               }
+              style={{
+                left: relationshipChooser.position.left,
+                top: relationshipChooser.position.top,
+                transform: "none",
+              }}
               initialKind={
                 relationshipChooser.mode === "edit"
                   ? activeCanvas.relationships.find(
@@ -729,7 +887,15 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
                   : undefined
               }
               onSelect={chooseRelationshipKind}
-              onCancel={() => setRelationshipChooser(null)}
+              onCancel={() => {
+                setRelationshipChooser(null);
+                setPendingSource(null);
+              }}
+              onDelete={
+                relationshipChooser.mode === "edit"
+                  ? () => deleteRelationship(relationshipChooser.relationshipId)
+                  : undefined
+              }
             />
           )}
         </section>

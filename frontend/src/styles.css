@@ -161,7 +161,10 @@ body:has(.landing-page) { min-width: 320px; }
 .relationship-popover__heading { color: #35445a; font: 700 12px Manrope, sans-serif; }
 .relationship-popover select { min-width: 0; padding: 8px 9px; border: 1px solid #dfe4eb; border-radius: 6px; background: #fff; color: #34445d; font: 11px 'DM Sans', sans-serif; }
 .relationship-popover__actions { display: flex; justify-content: flex-end; gap: 7px; }
+.relationship-popover__actions { flex-wrap: wrap; }
 .relationship-popover__actions button { min-height: 30px; padding: 0 10px; border: 1px solid #dce2ea; border-radius: 6px; background: #fff; color: #68778c; cursor: pointer; font-size: 10px; font-weight: 600; }
+.relationship-popover__actions .popover-delete { border-color: #e4cccc; color: #a34545; }
+.relationship-popover__actions .popover-delete:hover { background: #fff4f3; }
 .relationship-popover__actions .popover-confirm { border-color: #526b98; background: #526b98; color: #fff; }
 .relationship-popover__actions .popover-confirm:disabled { cursor: not-allowed; opacity: .45; }
 .canvas-legend { right: 14px; top: 58px; }

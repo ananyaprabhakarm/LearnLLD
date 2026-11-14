@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import type { UMLRelationshipKind } from "../diagram/types";
 
 export const relationshipOptions: {
@@ -22,6 +22,8 @@ type RelationshipTypePopoverProps = {
   title: string;
   onSelect: (kind: UMLRelationshipKind) => void;
   onCancel: () => void;
+  onDelete?: () => void;
+  style?: CSSProperties;
 };
 
 export default function RelationshipTypePopover({
@@ -29,6 +31,8 @@ export default function RelationshipTypePopover({
   title,
   onSelect,
   onCancel,
+  onDelete,
+  style,
 }: RelationshipTypePopoverProps) {
   const [kind, setKind] = useState<UMLRelationshipKind | "">(
     initialKind ?? "",
@@ -38,6 +42,8 @@ export default function RelationshipTypePopover({
     <form
       className="relationship-popover"
       aria-label={title}
+      style={style}
+      onPointerDown={(event) => event.stopPropagation()}
       onSubmit={(event) => {
         event.preventDefault();
         if (kind) onSelect(kind);
@@ -65,8 +71,17 @@ export default function RelationshipTypePopover({
         <button type="button" className="popover-cancel" onClick={onCancel}>
           Cancel
         </button>
+        {onDelete && (
+          <button
+            type="button"
+            className="popover-delete"
+            onClick={onDelete}
+          >
+            Delete Connection
+          </button>
+        )}
         <button type="submit" className="popover-confirm" disabled={!kind}>
-          {initialKind ? "Update" : "Create relationship"}
+          {initialKind ? "Change Relationship Type" : "Create relationship"}
         </button>
       </div>
     </form>
