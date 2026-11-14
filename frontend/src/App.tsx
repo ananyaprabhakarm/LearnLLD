@@ -25,7 +25,10 @@ import "@xyflow/react/dist/style.css";
 import Brand from "./components/Brand";
 import ClassNode from "./components/ClassNode";
 import { ClassNodeActionsContext } from "./components/ClassNodeActionsContext";
-import type { UMLBorderPoint } from "./components/ClassNodeActionsContext";
+import {
+  getUMLBorderPoint,
+  type UMLBorderPoint,
+} from "./components/ClassNodeActionsContext";
 import LandingPage from "./components/LandingPage";
 import RelationshipTypePopover from "./components/RelationshipTypePopover";
 import UMLRelationshipEdge, {
@@ -45,6 +48,12 @@ import type {
 type DiagramNode = Node<UMLClassNodeFlowData, "class">;
 type DiagramEdge = UMLRelationshipFlowEdge;
 type PopupPosition = { left: number; top: number };
+type ConnectionDrag = {
+  nodeId: string;
+  point: UMLBorderPoint;
+  start: { x: number; y: number };
+  current: { x: number; y: number };
+};
 type RelationshipChooser =
   | { mode: "create"; connection: Connection; position: PopupPosition }
   | { mode: "edit"; relationshipId: string; position: PopupPosition }
@@ -150,15 +159,20 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
   );
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
-  const [pendingSource, setPendingSource] = useState<{
-    nodeId: string;
-    handleId: string;
-  } | null>(null);
+  const [connectionDrag, setConnectionDrag] = useState<ConnectionDrag | null>(
+    null,
+  );
+  const connectionDragRef = useRef<ConnectionDrag | null>(null);
   const [relationshipChooser, setRelationshipChooser] =
     useState<RelationshipChooser>(null);
   const [clipboard, setClipboard] = useState<DiagramClipboard | null>(null);
   const flowFrameRef = useRef<HTMLDivElement>(null);
   const pasteCountRef = useRef(0);
+
+  const cancelConnectionDrag = useCallback(() => {
+    connectionDragRef.current = null;
+    setConnectionDrag(null);
+  }, []);
 
   const relationshipPairIndexes = new Map<string, number>();
   const edges: DiagramEdge[] = activeCanvas.relationships.map(
@@ -245,7 +259,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         return;
       }
       setRelationshipChooser(null);
-      setPendingSource(null);
+      cancelConnectionDrag();
     };
     document.addEventListener("pointerdown", handleOutsidePointerDown);
     return () =>
@@ -305,32 +319,86 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     };
   }, []);
 
-  const onBorderClick = useCallback(
+  const onBorderPointerDown = useCallback(
     (nodeId: string, point: UMLBorderPoint, clientX: number, clientY: number) => {
       flowFrameRef.current?.focus({ preventScroll: true });
-      const position = popupPositionAt(clientX, clientY);
-      if (!pendingSource) {
-        setPendingSource({
-          nodeId,
-          handleId: createHandleId("source", point.side, point.offset),
-        });
-        return;
-      }
-
-      setRelationshipChooser({
-        mode: "create",
-        connection: {
-          source: pendingSource.nodeId,
-          sourceHandle: pendingSource.handleId,
-          target: nodeId,
-          targetHandle: createHandleId("target", point.side, point.offset),
-        },
-        position,
-      });
-      setPendingSource(null);
+      setRelationshipChooser(null);
+      const drag: ConnectionDrag = {
+        nodeId,
+        point,
+        start: { x: clientX, y: clientY },
+        current: { x: clientX, y: clientY },
+      };
+      connectionDragRef.current = drag;
+      setConnectionDrag(drag);
     },
-    [pendingSource, popupPositionAt],
+    [],
   );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const current = connectionDragRef.current;
+      if (!current) return;
+      const next = {
+        ...current,
+        current: { x: event.clientX, y: event.clientY },
+      };
+      connectionDragRef.current = next;
+      setConnectionDrag(next);
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const drag = connectionDragRef.current;
+      if (!drag) return;
+      const target = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLElement>("[data-class-node-id]");
+      const targetNodeId = target?.dataset.classNodeId;
+      const targetPoint = target
+        ? getUMLBorderPoint(
+            target.getBoundingClientRect(),
+            event.clientX,
+            event.clientY,
+          )
+        : null;
+
+      if (targetNodeId && targetNodeId !== drag.nodeId && targetPoint) {
+        setRelationshipChooser({
+          mode: "create",
+          connection: {
+            source: drag.nodeId,
+            sourceHandle: createHandleId(
+              "source",
+              drag.point.side,
+              drag.point.offset,
+            ),
+            target: targetNodeId,
+            targetHandle: createHandleId(
+              "target",
+              targetPoint.side,
+              targetPoint.offset,
+            ),
+          },
+          position: popupPositionAt(event.clientX, event.clientY),
+        });
+      }
+      connectionDragRef.current = null;
+      setConnectionDrag(null);
+    };
+
+    const handlePointerCancel = () => {
+      connectionDragRef.current = null;
+      setConnectionDrag(null);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+    };
+  }, [popupPositionAt]);
 
   const onSelectionChange = useCallback(
     ({
@@ -496,7 +564,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
       if (event.key === "Escape" && relationshipChooser?.mode === "create") {
         event.preventDefault();
         setRelationshipChooser(null);
-        setPendingSource(null);
+        cancelConnectionDrag();
         return;
       }
       if (
@@ -513,10 +581,10 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         Boolean(flowFrameRef.current?.contains(target));
       if (
         event.key === "Escape" &&
-        (canvasHasFocus || pendingSource || relationshipChooser)
+        (canvasHasFocus || connectionDrag || relationshipChooser)
       ) {
         event.preventDefault();
-        setPendingSource(null);
+        cancelConnectionDrag();
         setRelationshipChooser(null);
         setSelectedNodeIds([]);
         setSelectedEdgeIds([]);
@@ -575,8 +643,9 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     copySelected,
     pasteCopied,
     selectAll,
-    pendingSource,
+    connectionDrag,
     relationshipChooser,
+    cancelConnectionDrag,
     selectedEdgeIds.length,
     selectedNodeIds.length,
   ]);
@@ -637,7 +706,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     setNodes([]);
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
-    setPendingSource(null);
+    cancelConnectionDrag();
     setRelationshipChooser(null);
   };
 
@@ -653,7 +722,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     }
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
-    setPendingSource(null);
+    cancelConnectionDrag();
     setRelationshipChooser(null);
   };
 
@@ -688,7 +757,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     }
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
-    setPendingSource(null);
+    cancelConnectionDrag();
     setRelationshipChooser(null);
   };
 
@@ -751,7 +820,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         ),
       }));
     }
-    setPendingSource(null);
+    cancelConnectionDrag();
     setRelationshipChooser(null);
   };
 
@@ -887,7 +956,39 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
             flowFrameRef.current?.focus({ preventScroll: true });
           }}
         >
-          <ClassNodeActionsContext.Provider value={{ updateClassData, onBorderClick }}>
+          {connectionDrag && (
+            <svg className="connection-preview" aria-hidden="true">
+              <defs>
+                <marker
+                  id="connection-preview-arrow"
+                  markerWidth="9"
+                  markerHeight="9"
+                  refX="7"
+                  refY="4.5"
+                  orient="auto"
+                >
+                  <path d="M0,0 L9,4.5 L0,9 z" />
+                </marker>
+              </defs>
+              {(() => {
+                const bounds = flowFrameRef.current?.getBoundingClientRect();
+                if (!bounds) return null;
+                const startX = connectionDrag.start.x - bounds.left;
+                const startY = connectionDrag.start.y - bounds.top;
+                const endX = connectionDrag.current.x - bounds.left;
+                const endY = connectionDrag.current.y - bounds.top;
+                const curve = Math.max(35, Math.abs(endX - startX) * 0.4);
+                const direction = endX >= startX ? 1 : -1;
+                return (
+                  <path
+                    d={`M ${startX} ${startY} C ${startX + curve * direction} ${startY}, ${endX - curve * direction} ${endY}, ${endX} ${endY}`}
+                    markerEnd="url(#connection-preview-arrow)"
+                  />
+                );
+              })()}
+            </svg>
+          )}
+          <ClassNodeActionsContext.Provider value={{ updateClassData, onBorderPointerDown }}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -898,7 +999,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
               onEdgesChange={onEdgesChange}
               onEdgeClick={onEdgeClick}
               onPaneClick={() => {
-                setPendingSource(null);
+                cancelConnectionDrag();
                 setRelationshipChooser(null);
               }}
               onSelectionChange={onSelectionChange}
@@ -958,7 +1059,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
               onSelect={chooseRelationshipKind}
               onCancel={() => {
                 setRelationshipChooser(null);
-                setPendingSource(null);
+                cancelConnectionDrag();
               }}
               onDelete={
                 relationshipChooser.mode === "edit"
