@@ -292,7 +292,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         current.map((node) => withRelationshipHandles(node, relationships)),
       );
     },
-    [updateActiveCanvas],
+    [activeCanvas.relationships, updateActiveCanvas],
   );
 
   const popupPositionAt = useCallback((clientX: number, clientY: number) => {
@@ -377,20 +377,30 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     if (selectedNodeIds.length === 0 && selectedEdgeIds.length === 0) return;
     const nodeIds = new Set(selectedNodeIds);
     const relationshipIds = new Set(selectedEdgeIds);
+    const relationships = activeCanvas.relationships.filter(
+      (relationship) =>
+        !relationshipIds.has(relationship.id) &&
+        !nodeIds.has(relationship.sourceId) &&
+        !nodeIds.has(relationship.targetId),
+    );
     updateActiveCanvas((canvas) => ({
       ...canvas,
       classes: canvas.classes.filter((umlClass) => !nodeIds.has(umlClass.id)),
-      relationships: canvas.relationships.filter(
-        (relationship) =>
-          !relationshipIds.has(relationship.id) &&
-          !nodeIds.has(relationship.sourceId) &&
-          !nodeIds.has(relationship.targetId),
-      ),
+      relationships,
     }));
-    setNodes((current) => current.filter((node) => !nodeIds.has(node.id)));
+    setNodes((current) =>
+      current
+        .filter((node) => !nodeIds.has(node.id))
+        .map((node) => withRelationshipHandles(node, relationships)),
+    );
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
-  }, [selectedEdgeIds, selectedNodeIds, updateActiveCanvas]);
+  }, [
+    activeCanvas.relationships,
+    selectedEdgeIds,
+    selectedNodeIds,
+    updateActiveCanvas,
+  ]);
 
   const deleteSelectedConnections = useCallback(() => {
     if (selectedEdgeIds.length === 0) return;
@@ -502,18 +512,46 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         target instanceof globalThis.Node &&
         Boolean(flowFrameRef.current?.contains(target));
       if (
+        event.key === "Escape" &&
+        (canvasHasFocus || pendingSource || relationshipChooser)
+      ) {
+        event.preventDefault();
+        setPendingSource(null);
+        setRelationshipChooser(null);
+        setSelectedNodeIds([]);
+        setSelectedEdgeIds([]);
+        setNodes((current) =>
+          current.map((node) => ({ ...node, selected: false })),
+        );
+        return;
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "c" &&
+        canvasHasFocus &&
+        selectedNodeIds.length > 0
+      ) {
+        event.preventDefault();
+        copySelected();
+        return;
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "v" &&
+        canvasHasFocus &&
+        clipboard
+      ) {
+        event.preventDefault();
+        pasteCopied();
+        return;
+      }
+      if (
         (event.metaKey || event.ctrlKey) &&
         event.key.toLowerCase() === "a" &&
         canvasHasFocus
       ) {
         event.preventDefault();
-        setSelectedNodeIds(activeCanvas.classes.map((umlClass) => umlClass.id));
-        setNodes((current) =>
-          current.map((node) => ({ ...node, selected: true })),
-        );
-        setSelectedEdgeIds(
-          activeCanvas.relationships.map((relationship) => relationship.id),
-        );
+        selectAll();
         return;
       }
 
@@ -533,6 +571,12 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     activeCanvas.classes,
     activeCanvas.relationships,
     deleteSelected,
+    clipboard,
+    copySelected,
+    pasteCopied,
+    selectAll,
+    pendingSource,
+    relationshipChooser,
     selectedEdgeIds.length,
     selectedNodeIds.length,
   ]);
@@ -784,11 +828,33 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
             <button className="toolbar-action toolbar-action--primary" type="button" onClick={addClass}>
               <span aria-hidden="true">＋</span> Add class
             </button>
-            {(selectedNodeIds.length > 0 || selectedEdgeIds.length > 0) && (
-              <button className="toolbar-action toolbar-action--danger" type="button" onClick={deleteSelected}>
-                Delete selected
-              </button>
-            )}
+            <button className="toolbar-action" type="button" onClick={selectAll}>
+              Select All
+            </button>
+            <button
+              className="toolbar-action toolbar-action--danger"
+              type="button"
+              onClick={deleteSelected}
+              disabled={selectedNodeIds.length === 0 && selectedEdgeIds.length === 0}
+            >
+              Delete Selected
+            </button>
+            <button
+              className="toolbar-action"
+              type="button"
+              onClick={copySelected}
+              disabled={selectedNodeIds.length === 0}
+            >
+              Copy
+            </button>
+            <button
+              className="toolbar-action"
+              type="button"
+              onClick={pasteCopied}
+              disabled={!clipboard}
+            >
+              Paste
+            </button>
             {selectedEdgeIds.length > 0 && (
               <button
                 className="toolbar-action toolbar-action--danger"

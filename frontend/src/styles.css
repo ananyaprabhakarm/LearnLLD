@@ -153,6 +153,7 @@ body:has(.landing-page) { min-width: 320px; }
 .toolbar-action--primary:hover { background: #405a87; }
 .toolbar-action--danger { border-color: #e4cccc; color: #a34545; }
 .toolbar-action--danger:hover { background: #fff4f3; }
+.toolbar-action:disabled { cursor: not-allowed; opacity: .45; }
 .flow-frame { flex: 1; min-height: 0; margin: 10px 12px 12px; border-radius: 10px; }
 .fit-view-panel { margin: 12px; }
 .fit-view-button { padding: 7px 10px; border: 1px solid #e0e5ec; border-radius: 6px; background: #fff; color: #62728a; cursor: pointer; box-shadow: 0 3px 10px rgb(30 45 65 / 7%); font-size: 10px; font-weight: 600; }
