@@ -24,6 +24,7 @@ import "@xyflow/react/dist/style.css";
 import Brand from "./components/Brand";
 import ClassNode from "./components/ClassNode";
 import { ClassNodeActionsContext } from "./components/ClassNodeActionsContext";
+import type { UMLBorderPoint } from "./components/ClassNodeActionsContext";
 import LandingPage from "./components/LandingPage";
 import RelationshipTypePopover from "./components/RelationshipTypePopover";
 import UMLRelationshipEdge, {
@@ -34,25 +35,77 @@ import type {
   UMLCanvas,
   UMLClass,
   UMLClassNodeData,
+  UMLClassNodeFlowData,
   UMLRelationship,
   UMLRelationshipKind,
   UMLWorkspace,
 } from "./diagram/types";
 
-type DiagramNode = Node<UMLClassNodeData, "class">;
+type DiagramNode = Node<UMLClassNodeFlowData, "class">;
 type DiagramEdge = UMLRelationshipFlowEdge;
+type PopupPosition = { left: number; top: number };
 type RelationshipChooser =
-  | { mode: "create"; connection: Connection }
-  | { mode: "edit"; relationshipId: string }
+  | { mode: "create"; connection: Connection; position: PopupPosition }
+  | { mode: "edit"; relationshipId: string; position: PopupPosition }
   | null;
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-function toFlowNode(umlClass: UMLClass): DiagramNode {
+function getHandleIds(
+  nodeId: string,
+  relationships: UMLRelationship[],
+  type: "source" | "target",
+) {
+  const matching = relationships.filter((relationship) =>
+    type === "source"
+      ? relationship.sourceId === nodeId
+      : relationship.targetId === nodeId,
+  );
+  const ids = matching.map((relationship) =>
+    type === "source"
+      ? relationship.sourceHandle ?? "source-top"
+      : relationship.targetHandle ?? "target-top",
+  );
+  return [...new Set(ids)];
+}
+
+function withRelationshipHandles(
+  node: DiagramNode,
+  relationships: UMLRelationship[],
+): DiagramNode {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      sourceHandleIds: getHandleIds(node.id, relationships, "source"),
+      targetHandleIds: getHandleIds(node.id, relationships, "target"),
+    },
+  };
+}
+
+function toFlowNode(
+  umlClass: UMLClass,
+  relationships: UMLRelationship[] = [],
+): DiagramNode {
   const { id, position, ...data } = umlClass;
-  return { id, type: "class", position, data };
+  return withRelationshipHandles(
+    { id, type: "class", position, data: { ...data, sourceHandleIds: [], targetHandleIds: [] } },
+    relationships,
+  );
+}
+
+function createHandleId(type: "source" | "target", side: string, offset: number) {
+  return `${type}-${side}-${offset}`;
+}
+
+function cloneUMLClass(umlClass: UMLClass): UMLClass {
+  return {
+    ...umlClass,
+    attributes: umlClass.attributes.map((attribute) => ({ ...attribute })),
+    methods: umlClass.methods.map((method) => ({ ...method })),
+  };
 }
 
 const nodeTypes = { class: ClassNode };
@@ -86,10 +139,16 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     workspace.canvases.find((canvas) => canvas.id === activeCanvasId) ??
     workspace.canvases[0];
   const [nodes, setNodes] = useState<DiagramNode[]>(() =>
-    activeCanvas.classes.map(toFlowNode),
+    activeCanvas.classes.map((umlClass) =>
+      toFlowNode(umlClass, activeCanvas.relationships),
+    ),
   );
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  const [pendingSource, setPendingSource] = useState<{
+    nodeId: string;
+    handleId: string;
+  } | null>(null);
   const [relationshipChooser, setRelationshipChooser] =
     useState<RelationshipChooser>(null);
   const flowFrameRef = useRef<HTMLDivElement>(null);
@@ -153,7 +212,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
       setNodes((current) =>
         current.map((node) =>
           node.id === nodeId
-            ? { ...node, data: update(node.data) }
+            ? { ...node, data: { ...node.data, ...update(node.data) } }
             : node,
         ),
       );
@@ -162,7 +221,11 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
   );
 
   useEffect(() => {
-    setNodes(activeCanvas.classes.map(toFlowNode));
+    setNodes(
+      activeCanvas.classes.map((umlClass) =>
+        toFlowNode(umlClass, activeCanvas.relationships),
+      ),
+    );
   }, [activeCanvasId]);
 
   const onNodesChange = useCallback(
@@ -204,13 +267,41 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     [updateActiveCanvas],
   );
 
-  const onConnect = useCallback(
-    (connection: Connection) => {
-      if (connection.source && connection.target) {
-        setRelationshipChooser({ mode: "create", connection });
+  const popupPositionAt = useCallback((clientX: number, clientY: number) => {
+    const frame = flowFrameRef.current;
+    if (!frame) return { left: 12, top: 12 };
+    const bounds = frame.getBoundingClientRect();
+    return {
+      left: Math.max(12, Math.min(clientX - bounds.left, bounds.width - 342)),
+      top: Math.max(12, Math.min(clientY - bounds.top, bounds.height - 175)),
+    };
+  }, []);
+
+  const onBorderClick = useCallback(
+    (nodeId: string, point: UMLBorderPoint, clientX: number, clientY: number) => {
+      flowFrameRef.current?.focus({ preventScroll: true });
+      const position = popupPositionAt(clientX, clientY);
+      if (!pendingSource) {
+        setPendingSource({
+          nodeId,
+          handleId: createHandleId("source", point.side, point.offset),
+        });
+        return;
       }
+
+      setRelationshipChooser({
+        mode: "create",
+        connection: {
+          source: pendingSource.nodeId,
+          sourceHandle: pendingSource.handleId,
+          target: nodeId,
+          targetHandle: createHandleId("target", point.side, point.offset),
+        },
+        position,
+      });
+      setPendingSource(null);
     },
-    [],
+    [pendingSource, popupPositionAt],
   );
 
   const onSelectionChange = useCallback(
@@ -340,7 +431,13 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         id,
         type: "class",
         position,
-        data: { name: "NewClass", attributes: [], methods: [] },
+        data: {
+          name: "NewClass",
+          attributes: [],
+          methods: [],
+          sourceHandleIds: [],
+          targetHandleIds: [],
+        },
         selected: true,
       },
     ]);
@@ -365,15 +462,23 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     setNodes([]);
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
+    setPendingSource(null);
     setRelationshipChooser(null);
   };
 
   const selectCanvas = (canvasId: string) => {
     setActiveCanvasId(canvasId);
     const canvas = workspace.canvases.find((item) => item.id === canvasId);
-    if (canvas) setNodes(canvas.classes.map(toFlowNode));
+    if (canvas) {
+      setNodes(
+        canvas.classes.map((umlClass) =>
+          toFlowNode(umlClass, canvas.relationships),
+        ),
+      );
+    }
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
+    setPendingSource(null);
     setRelationshipChooser(null);
   };
 
@@ -400,18 +505,27 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     setWorkspace((current) => ({ ...current!, canvases: remaining }));
     if (canvas.id === activeCanvasId) {
       setActiveCanvasId(remaining[0].id);
-      setNodes(remaining[0].classes.map(toFlowNode));
+      setNodes(
+        remaining[0].classes.map((umlClass) =>
+          toFlowNode(umlClass, remaining[0].relationships),
+        ),
+      );
     }
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
+    setPendingSource(null);
     setRelationshipChooser(null);
   };
 
   const openRelationshipEditor = () => {
     if (selectedEdgeIds.length !== 1) return;
+    const bounds = flowFrameRef.current?.getBoundingClientRect();
     setRelationshipChooser({
       mode: "edit",
       relationshipId: selectedEdgeIds[0],
+      position: bounds
+        ? { left: Math.max(12, bounds.width / 2 - 165), top: 18 }
+        : { left: 12, top: 12 },
     });
   };
 
@@ -432,6 +546,10 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         ...canvas,
         relationships: [...canvas.relationships, relationship],
       }));
+      const relationships = [...activeCanvas.relationships, relationship];
+      setNodes((current) =>
+        current.map((node) => withRelationshipHandles(node, relationships)),
+      );
       setSelectedEdgeIds([relationship.id]);
       setSelectedNodeIds([]);
     } else {
@@ -444,6 +562,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         ),
       }));
     }
+    setPendingSource(null);
     setRelationshipChooser(null);
   };
 
@@ -557,7 +676,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
             flowFrameRef.current?.focus({ preventScroll: true });
           }}
         >
-          <ClassNodeActionsContext.Provider value={{ updateClassData }}>
+          <ClassNodeActionsContext.Provider value={{ updateClassData, onBorderClick }}>
             <ReactFlow
               nodes={nodes}
               edges={edges}

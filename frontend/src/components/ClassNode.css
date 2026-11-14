@@ -1,4 +1,5 @@
 .class-node {
+  position: relative;
   width: 250px;
   min-width: 220px;
   max-width: 320px;
@@ -167,17 +168,26 @@
 }
 
 .class-node .react-flow__handle {
-  z-index: 2;
-  width: 9px;
-  height: 9px;
+  z-index: 1;
+  width: 1px;
+  height: 1px;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.class-node__border-indicator {
+  position: absolute;
+  z-index: 5;
+  width: 11px;
+  height: 11px;
+  padding: 0;
   border: 2px solid #fff;
-  background: #7a91b6;
-}
-
-.class-node .class-node__handle--source {
+  border-radius: 50%;
   background: #526b98;
-}
-
-.class-node .class-node__handle--target {
-  background: #48a4ad;
+  box-shadow: 0 0 0 1px #526b98, 0 1px 4px rgb(30 45 65 / 30%);
+  cursor: crosshair;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
 }
