@@ -305,7 +305,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     };
   }, []);
 
-  const onBorderClick = useCallback(
+  const onBorderPointerDown = useCallback(
     (nodeId: string, point: UMLBorderPoint, clientX: number, clientY: number) => {
       flowFrameRef.current?.focus({ preventScroll: true });
       const position = popupPositionAt(clientX, clientY);
@@ -887,7 +887,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
             flowFrameRef.current?.focus({ preventScroll: true });
           }}
         >
-          <ClassNodeActionsContext.Provider value={{ updateClassData, onBorderClick }}>
+          <ClassNodeActionsContext.Provider value={{ updateClassData, onBorderPointerDown }}>
             <ReactFlow
               nodes={nodes}
               edges={edges}

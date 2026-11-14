@@ -11,7 +11,11 @@ import type {
   UMLClassNodeFlowData,
   UMLMethod,
 } from "../diagram/types";
-import { useClassNodeActions, type UMLBorderPoint } from "./ClassNodeActionsContext";
+import {
+  getUMLBorderPoint,
+  useClassNodeActions,
+  type UMLBorderPoint,
+} from "./ClassNodeActionsContext";
 import "./ClassNode.css";
 
 type ClassFlowNode = Node<UMLClassNodeFlowData, "class">;
@@ -50,23 +54,6 @@ function getHandleLayout(handleId: string) {
   };
 }
 
-function getBorderPoint(rect: DOMRect, clientX: number, clientY: number) {
-  const localX = clientX - rect.left;
-  const localY = clientY - rect.top;
-  const distances = [
-    { side: "top" as const, distance: localY, value: localX / rect.width },
-    { side: "right" as const, distance: rect.width - localX, value: localY / rect.height },
-    { side: "bottom" as const, distance: rect.height - localY, value: localX / rect.width },
-    { side: "left" as const, distance: localX, value: localY / rect.height },
-  ];
-  const nearest = distances.reduce((current, candidate) =>
-    candidate.distance < current.distance ? candidate : current,
-  );
-  if (nearest.distance > 14) return null;
-  const offset = Math.max(5, Math.min(95, Math.round(nearest.value * 100)));
-  return { side: nearest.side, offset } satisfies UMLBorderPoint;
-}
-
 function isInteractiveTarget(target: EventTarget | null) {
   return (
     target instanceof Element &&
@@ -90,7 +77,7 @@ function createId(prefix: string) {
 }
 
 export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
-  const { updateClassData, onBorderClick } = useClassNodeActions();
+  const { updateClassData, onBorderPointerDown } = useClassNodeActions();
   const updateNodeInternals = useUpdateNodeInternals();
   const [hoveredBorderPoint, setHoveredBorderPoint] =
     useState<UMLBorderPoint | null>(null);
@@ -280,8 +267,9 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
   return (
     <div
       className="class-node"
+      data-class-node-id={id}
       onPointerMove={(event) => {
-        const point = getBorderPoint(
+        const point = getUMLBorderPoint(
           event.currentTarget.getBoundingClientRect(),
           event.clientX,
           event.clientY,
@@ -290,7 +278,7 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
       }}
       onPointerDown={(event) => {
         if (isInteractiveTarget(event.target)) return;
-        const point = getBorderPoint(
+        const point = getUMLBorderPoint(
           event.currentTarget.getBoundingClientRect(),
           event.clientX,
           event.clientY,
@@ -298,11 +286,11 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
         if (!point) return;
         event.preventDefault();
         event.stopPropagation();
-        onBorderClick(id, point, event.clientX, event.clientY);
+        onBorderPointerDown(id, point, event.clientX, event.clientY);
       }}
       onClick={(event) => {
         if (isInteractiveTarget(event.target)) return;
-        const point = getBorderPoint(
+        const point = getUMLBorderPoint(
           event.currentTarget.getBoundingClientRect(),
           event.clientX,
           event.clientY,
