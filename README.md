@@ -1,8 +1,16 @@
-# LearnLLD — LLD Learning Platform
+# LearnLLD
 
-LearnLLD is an interactive UML class diagram editor built with React, TypeScript, Vite, and React Flow. The frontend application lives in `frontend/` so a FastAPI backend can be added alongside it later.
+LearnLLD is a practice space for low-level design. Its editor lets you build UML class diagrams with React Flow, while a FastAPI service provides an initial API for saving diagrams.
 
-## Run it
+## Project status
+
+- **Frontend:** React 19, TypeScript, Vite, and `@xyflow/react`.
+- **Backend:** FastAPI, Pydantic, SQLAlchemy, and SQLite.
+- **Editor:** Create and edit classes inline, connect classes, manage relationships, and select, copy, paste, or delete diagram elements.
+- **Persistence:** The API and frontend API client are implemented. The editor currently keeps workspace and canvas state in React; it does not yet load or save diagrams through the API.
+- **Accounts:** No authentication or user accounts yet.
+
+## Run the frontend
 
 ```sh
 cd frontend
@@ -10,36 +18,51 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. Run `npm run build` in `frontend/` to type-check and create a production build; `npm run preview` serves that build locally.
+Open the URL printed by Vite (usually `http://localhost:5173`). To type-check and build for production:
 
-## Try the canvas
+```sh
+npm run build
+```
 
-- Drag nodes to reposition them, drag the blank canvas to pan, and use the controls or mouse wheel to zoom.
-- Select a class and choose **Edit Class** to change its name, attributes, and methods.
-- Add a class with the left toolbar. Connect node handles to create labeled, directional relationships; nodes can have multiple connections.
-- Select a connection and use its delete action or press Delete/Backspace. Keyboard deletion is ignored while editing text fields.
+## Run the backend
 
-## Workspaces and canvases
+In a second terminal:
 
-- The editor currently has one workspace. Edit its name in the left sidebar.
-- Create a canvas with the **+** button beside **CANVASES**. New canvases start empty; the first canvas contains the `User`–`Order` example.
-- Select a canvas in the sidebar to switch to it. Rename the active canvas by editing its title above the diagram.
-- Each canvas keeps its own nodes and connections while you switch, so editing one canvas does not replace another canvas's diagram.
-- Workspace and canvas data currently live in React state for the page session. The FastAPI backend and typed frontend API client are available, but the editor UI does not yet call the API to load or save canvases; refreshing still resets the editor.
+```sh
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload
+```
 
-Multiple workspaces and connecting editor save/load actions to the backend remain later milestones.
+The API runs at `http://localhost:8000`; interactive API documentation is at `http://localhost:8000/docs`. See [backend/README.md](backend/README.md) for the API contract, tests, configuration, and deployment notes.
 
-## Backend
+## Frontend and backend configuration
 
-The initial FastAPI API and its setup, endpoint contract, frontend connection steps, and SQLite deployment limits are documented in [backend/README.md](backend/README.md). To run it locally, create the backend virtual environment, install `backend/requirements.txt`, copy `backend/.env.example` to `backend/.env`, and start Uvicorn from `backend/`.
+The frontend API client reads `VITE_API_BASE_URL` from `frontend/.env.local`. Copy the example file and set the backend origin if needed:
 
-## Frontend structure
+```sh
+cp frontend/.env.example frontend/.env.local
+```
 
-- `frontend/src/App.tsx` — single-workspace state, named canvas list and switching, React Flow state, class editing, and edge actions.
-- `frontend/src/diagram/types.ts` — serializable UML classes, attributes, methods, and relationships.
-- `frontend/src/components/ClassNode.tsx` — reusable UML class node.
-- `frontend/public/assets/` — LearnLLD logo and browser icons.
-- `frontend/package.json` — frontend scripts and dependencies.
-- `frontend/src/api/diagrams.ts` — typed client for the diagram CRUD API.
-- `backend/app/` — FastAPI routes, Pydantic schemas, SQLAlchemy model, configuration, and database lifecycle.
-- `backend/tests/` — API tests using an isolated temporary SQLite database.
+The default is `http://localhost:8000`. The backend's `FRONTEND_ORIGINS` setting controls allowed browser origins; its local default is `http://localhost:5173`. Restart Vite after changing frontend environment variables.
+
+## Repository layout
+
+```text
+frontend/
+  src/App.tsx                 Workspace, canvas, and editor state
+  src/components/             UML class nodes and editor UI
+  src/diagram/types.ts        UML classes, attributes, methods, and relationships
+  src/api/diagrams.ts         Typed client for the diagram API
+  public/assets/              Logo and browser icons
+backend/
+  app/                        FastAPI routes, schemas, models, and database setup
+  tests/                      API tests using a separate temporary database
+```
+
+## Current limitations
+
+The MVP supports one workspace with multiple named canvases in the current browser session. Data resets when the page is refreshed. Connecting the editor to the API, adding multiple workspaces, and adding accounts are future work. SQLite is suitable for local development and a small MVP; see the backend guide for production limitations.
