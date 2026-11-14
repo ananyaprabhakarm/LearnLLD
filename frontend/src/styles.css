@@ -167,5 +167,6 @@ body:has(.landing-page) { min-width: 320px; }
 .relationship-popover__actions .popover-delete:hover { background: #fff4f3; }
 .relationship-popover__actions .popover-confirm { border-color: #526b98; background: #526b98; color: #fff; }
 .relationship-popover__actions .popover-confirm:disabled { cursor: not-allowed; opacity: .45; }
+.react-flow__selection { border: 1px solid #526b98 !important; background: rgb(82 107 152 / 14%) !important; }
 .canvas-legend { right: 14px; top: 58px; }
 @media (max-width: 760px) { .topbar { height: 56px; min-height: 56px; gap: 10px; padding: 0 12px; } .topbar .brand span { display: none; } .workspace-title { padding-left: 10px; } .share-button { padding: 7px 9px; } .editor-toolbar { padding: 7px 10px; } .toolbar-caption { display: none; } .flow-frame { margin: 7px; } .workspace-modal { padding: 24px 20px; } }

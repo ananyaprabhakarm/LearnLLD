@@ -13,6 +13,7 @@ import {
   MiniMap,
   Panel,
   ReactFlow,
+  SelectionMode,
   applyNodeChanges,
   useReactFlow,
   type Connection,
@@ -839,6 +840,8 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
               defaultEdgeOptions={{ type: "umlRelationship" }}
               deleteKeyCode={null}
               selectionOnDrag
+              selectionMode={SelectionMode.Full}
+              panOnDrag={[1]}
               selectionKeyCode="Shift"
               multiSelectionKeyCode="Shift"
               edgesFocusable
