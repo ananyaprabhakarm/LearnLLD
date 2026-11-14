@@ -13,6 +13,7 @@ import {
   MiniMap,
   Panel,
   ReactFlow,
+  SelectionMode,
   applyNodeChanges,
   useReactFlow,
   type Connection,
@@ -24,6 +25,7 @@ import "@xyflow/react/dist/style.css";
 import Brand from "./components/Brand";
 import ClassNode from "./components/ClassNode";
 import { ClassNodeActionsContext } from "./components/ClassNodeActionsContext";
+import type { UMLBorderPoint } from "./components/ClassNodeActionsContext";
 import LandingPage from "./components/LandingPage";
 import RelationshipTypePopover from "./components/RelationshipTypePopover";
 import UMLRelationshipEdge, {
@@ -34,25 +36,81 @@ import type {
   UMLCanvas,
   UMLClass,
   UMLClassNodeData,
+  UMLClassNodeFlowData,
   UMLRelationship,
   UMLRelationshipKind,
   UMLWorkspace,
 } from "./diagram/types";
 
-type DiagramNode = Node<UMLClassNodeData, "class">;
+type DiagramNode = Node<UMLClassNodeFlowData, "class">;
 type DiagramEdge = UMLRelationshipFlowEdge;
+type PopupPosition = { left: number; top: number };
 type RelationshipChooser =
-  | { mode: "create"; connection: Connection }
-  | { mode: "edit"; relationshipId: string }
+  | { mode: "create"; connection: Connection; position: PopupPosition }
+  | { mode: "edit"; relationshipId: string; position: PopupPosition }
   | null;
+type DiagramClipboard = {
+  classes: UMLClass[];
+  relationships: UMLRelationship[];
+};
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-function toFlowNode(umlClass: UMLClass): DiagramNode {
+function getHandleIds(
+  nodeId: string,
+  relationships: UMLRelationship[],
+  type: "source" | "target",
+) {
+  const matching = relationships.filter((relationship) =>
+    type === "source"
+      ? relationship.sourceId === nodeId
+      : relationship.targetId === nodeId,
+  );
+  const ids = matching.map((relationship) =>
+    type === "source"
+      ? relationship.sourceHandle ?? "source-top"
+      : relationship.targetHandle ?? "target-top",
+  );
+  return [...new Set(ids)];
+}
+
+function withRelationshipHandles(
+  node: DiagramNode,
+  relationships: UMLRelationship[],
+): DiagramNode {
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      sourceHandleIds: getHandleIds(node.id, relationships, "source"),
+      targetHandleIds: getHandleIds(node.id, relationships, "target"),
+    },
+  };
+}
+
+function toFlowNode(
+  umlClass: UMLClass,
+  relationships: UMLRelationship[] = [],
+): DiagramNode {
   const { id, position, ...data } = umlClass;
-  return { id, type: "class", position, data };
+  return withRelationshipHandles(
+    { id, type: "class", position, data: { ...data, sourceHandleIds: [], targetHandleIds: [] } },
+    relationships,
+  );
+}
+
+function createHandleId(type: "source" | "target", side: string, offset: number) {
+  return `${type}-${side}-${offset}`;
+}
+
+function cloneUMLClass(umlClass: UMLClass): UMLClass {
+  return {
+    ...umlClass,
+    attributes: umlClass.attributes.map((attribute) => ({ ...attribute })),
+    methods: umlClass.methods.map((method) => ({ ...method })),
+  };
 }
 
 const nodeTypes = { class: ClassNode };
@@ -86,13 +144,21 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     workspace.canvases.find((canvas) => canvas.id === activeCanvasId) ??
     workspace.canvases[0];
   const [nodes, setNodes] = useState<DiagramNode[]>(() =>
-    activeCanvas.classes.map(toFlowNode),
+    activeCanvas.classes.map((umlClass) =>
+      toFlowNode(umlClass, activeCanvas.relationships),
+    ),
   );
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  const [pendingSource, setPendingSource] = useState<{
+    nodeId: string;
+    handleId: string;
+  } | null>(null);
   const [relationshipChooser, setRelationshipChooser] =
     useState<RelationshipChooser>(null);
+  const [clipboard, setClipboard] = useState<DiagramClipboard | null>(null);
   const flowFrameRef = useRef<HTMLDivElement>(null);
+  const pasteCountRef = useRef(0);
 
   const relationshipPairIndexes = new Map<string, number>();
   const edges: DiagramEdge[] = activeCanvas.relationships.map(
@@ -153,7 +219,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
       setNodes((current) =>
         current.map((node) =>
           node.id === nodeId
-            ? { ...node, data: update(node.data) }
+            ? { ...node, data: { ...node.data, ...update(node.data) } }
             : node,
         ),
       );
@@ -162,8 +228,29 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
   );
 
   useEffect(() => {
-    setNodes(activeCanvas.classes.map(toFlowNode));
+    setNodes(
+      activeCanvas.classes.map((umlClass) =>
+        toFlowNode(umlClass, activeCanvas.relationships),
+      ),
+    );
   }, [activeCanvasId]);
+
+  useEffect(() => {
+    if (!relationshipChooser) return;
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".relationship-popover")
+      ) {
+        return;
+      }
+      setRelationshipChooser(null);
+      setPendingSource(null);
+    };
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  }, [relationshipChooser]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<DiagramNode>[]) => {
@@ -194,23 +281,55 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
           .map((change) => change.id),
       );
       if (removedIds.size === 0) return;
+      const relationships = activeCanvas.relationships.filter(
+        (relationship) => !removedIds.has(relationship.id),
+      );
       updateActiveCanvas((canvas) => ({
         ...canvas,
-        relationships: canvas.relationships.filter(
-          (relationship) => !removedIds.has(relationship.id),
-        ),
+        relationships,
       }));
+      setNodes((current) =>
+        current.map((node) => withRelationshipHandles(node, relationships)),
+      );
     },
-    [updateActiveCanvas],
+    [activeCanvas.relationships, updateActiveCanvas],
   );
 
-  const onConnect = useCallback(
-    (connection: Connection) => {
-      if (connection.source && connection.target) {
-        setRelationshipChooser({ mode: "create", connection });
+  const popupPositionAt = useCallback((clientX: number, clientY: number) => {
+    const frame = flowFrameRef.current;
+    if (!frame) return { left: 12, top: 12 };
+    const bounds = frame.getBoundingClientRect();
+    return {
+      left: Math.max(12, Math.min(clientX - bounds.left, bounds.width - 342)),
+      top: Math.max(12, Math.min(clientY - bounds.top, bounds.height - 175)),
+    };
+  }, []);
+
+  const onBorderClick = useCallback(
+    (nodeId: string, point: UMLBorderPoint, clientX: number, clientY: number) => {
+      flowFrameRef.current?.focus({ preventScroll: true });
+      const position = popupPositionAt(clientX, clientY);
+      if (!pendingSource) {
+        setPendingSource({
+          nodeId,
+          handleId: createHandleId("source", point.side, point.offset),
+        });
+        return;
       }
+
+      setRelationshipChooser({
+        mode: "create",
+        connection: {
+          source: pendingSource.nodeId,
+          sourceHandle: pendingSource.handleId,
+          target: nodeId,
+          targetHandle: createHandleId("target", point.side, point.offset),
+        },
+        position,
+      });
+      setPendingSource(null);
     },
-    [],
+    [pendingSource, popupPositionAt],
   );
 
   const onSelectionChange = useCallback(
@@ -227,6 +346,27 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     [],
   );
 
+  const onEdgeClick = useCallback(
+    (event: React.MouseEvent, edge: DiagramEdge) => {
+      setSelectedNodeIds([]);
+      setSelectedEdgeIds([edge.id]);
+      setRelationshipChooser({
+        mode: "edit",
+        relationshipId: edge.id,
+        position: popupPositionAt(event.clientX, event.clientY),
+      });
+    },
+    [popupPositionAt],
+  );
+
+  const selectAll = useCallback(() => {
+    setSelectedNodeIds(activeCanvas.classes.map((umlClass) => umlClass.id));
+    setNodes((current) => current.map((node) => ({ ...node, selected: true })));
+    setSelectedEdgeIds(
+      activeCanvas.relationships.map((relationship) => relationship.id),
+    );
+  }, [activeCanvas.classes, activeCanvas.relationships]);
+
   const deleteSelected = useCallback(() => {
     if (selectedNodeIds.length > 1) {
       const count = selectedNodeIds.length;
@@ -237,36 +377,128 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     if (selectedNodeIds.length === 0 && selectedEdgeIds.length === 0) return;
     const nodeIds = new Set(selectedNodeIds);
     const relationshipIds = new Set(selectedEdgeIds);
+    const relationships = activeCanvas.relationships.filter(
+      (relationship) =>
+        !relationshipIds.has(relationship.id) &&
+        !nodeIds.has(relationship.sourceId) &&
+        !nodeIds.has(relationship.targetId),
+    );
     updateActiveCanvas((canvas) => ({
       ...canvas,
       classes: canvas.classes.filter((umlClass) => !nodeIds.has(umlClass.id)),
-      relationships: canvas.relationships.filter(
-        (relationship) =>
-          !relationshipIds.has(relationship.id) &&
-          !nodeIds.has(relationship.sourceId) &&
-          !nodeIds.has(relationship.targetId),
-      ),
+      relationships,
     }));
-    setNodes((current) => current.filter((node) => !nodeIds.has(node.id)));
+    setNodes((current) =>
+      current
+        .filter((node) => !nodeIds.has(node.id))
+        .map((node) => withRelationshipHandles(node, relationships)),
+    );
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
-  }, [selectedEdgeIds, selectedNodeIds, updateActiveCanvas]);
+  }, [
+    activeCanvas.relationships,
+    selectedEdgeIds,
+    selectedNodeIds,
+    updateActiveCanvas,
+  ]);
 
   const deleteSelectedConnections = useCallback(() => {
     if (selectedEdgeIds.length === 0) return;
     const relationshipIds = new Set(selectedEdgeIds);
+    const relationships = activeCanvas.relationships.filter(
+      (relationship) => !relationshipIds.has(relationship.id),
+    );
     updateActiveCanvas((canvas) => ({
       ...canvas,
-      relationships: canvas.relationships.filter(
-        (relationship) => !relationshipIds.has(relationship.id),
-      ),
+      relationships,
     }));
+    setNodes((current) =>
+      current.map((node) => withRelationshipHandles(node, relationships)),
+    );
     setSelectedEdgeIds([]);
-  }, [selectedEdgeIds, updateActiveCanvas]);
+  }, [activeCanvas.relationships, selectedEdgeIds, updateActiveCanvas]);
+
+  const copySelected = useCallback(() => {
+    const selectedIds = new Set(selectedNodeIds);
+    const classes = activeCanvas.classes
+      .filter((umlClass) => selectedIds.has(umlClass.id))
+      .map(cloneUMLClass);
+    if (classes.length === 0) return;
+    const relationships = activeCanvas.relationships
+      .filter(
+        (relationship) =>
+          selectedIds.has(relationship.sourceId) &&
+          selectedIds.has(relationship.targetId),
+      )
+      .map((relationship) => ({ ...relationship }));
+    setClipboard({ classes, relationships });
+    pasteCountRef.current = 0;
+  }, [activeCanvas.classes, activeCanvas.relationships, selectedNodeIds]);
+
+  const pasteCopied = useCallback(() => {
+    if (!clipboard || clipboard.classes.length === 0) return;
+    pasteCountRef.current += 1;
+    const offset = pasteCountRef.current * 36;
+    const idMap = new Map(
+      clipboard.classes.map((umlClass) => [umlClass.id, createId("class")]),
+    );
+    const classes = clipboard.classes.map((umlClass) => ({
+      ...umlClass,
+      id: idMap.get(umlClass.id)!,
+      position: {
+        x: umlClass.position.x + offset,
+        y: umlClass.position.y + offset,
+      },
+      attributes: umlClass.attributes.map((attribute) => ({
+        ...attribute,
+        id: createId("attribute"),
+      })),
+      methods: umlClass.methods.map((method) => ({
+        ...method,
+        id: createId("method"),
+      })),
+    }));
+    const relationships = clipboard.relationships
+      .filter(
+        (relationship) =>
+          idMap.has(relationship.sourceId) && idMap.has(relationship.targetId),
+      )
+      .map((relationship) => ({
+        ...relationship,
+        id: createId("relationship"),
+        sourceId: idMap.get(relationship.sourceId)!,
+        targetId: idMap.get(relationship.targetId)!,
+      }));
+    const pastedNodeIds = classes.map((umlClass) => umlClass.id);
+    const pastedRelationshipIds = relationships.map(
+      (relationship) => relationship.id,
+    );
+
+    updateActiveCanvas((canvas) => ({
+      ...canvas,
+      classes: [...canvas.classes, ...classes],
+      relationships: [...canvas.relationships, ...relationships],
+    }));
+    setNodes((current) => [
+      ...current.map((node) => ({ ...node, selected: false })),
+      ...classes.map((umlClass) => ({
+        ...toFlowNode(umlClass, relationships),
+        selected: true,
+      })),
+    ]);
+    setSelectedNodeIds(pastedNodeIds);
+    setSelectedEdgeIds(pastedRelationshipIds);
+  }, [clipboard, updateActiveCanvas]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
+      if (event.key === "Escape" && relationshipChooser?.mode === "create") {
+        event.preventDefault();
+        setRelationshipChooser(null);
+        setPendingSource(null);
+        return;
+      }
       if (
         target instanceof HTMLElement &&
         (target.isContentEditable ||
@@ -280,18 +512,46 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         target instanceof globalThis.Node &&
         Boolean(flowFrameRef.current?.contains(target));
       if (
+        event.key === "Escape" &&
+        (canvasHasFocus || pendingSource || relationshipChooser)
+      ) {
+        event.preventDefault();
+        setPendingSource(null);
+        setRelationshipChooser(null);
+        setSelectedNodeIds([]);
+        setSelectedEdgeIds([]);
+        setNodes((current) =>
+          current.map((node) => ({ ...node, selected: false })),
+        );
+        return;
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "c" &&
+        canvasHasFocus &&
+        selectedNodeIds.length > 0
+      ) {
+        event.preventDefault();
+        copySelected();
+        return;
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "v" &&
+        canvasHasFocus &&
+        clipboard
+      ) {
+        event.preventDefault();
+        pasteCopied();
+        return;
+      }
+      if (
         (event.metaKey || event.ctrlKey) &&
         event.key.toLowerCase() === "a" &&
         canvasHasFocus
       ) {
         event.preventDefault();
-        setSelectedNodeIds(activeCanvas.classes.map((umlClass) => umlClass.id));
-        setNodes((current) =>
-          current.map((node) => ({ ...node, selected: true })),
-        );
-        setSelectedEdgeIds(
-          activeCanvas.relationships.map((relationship) => relationship.id),
-        );
+        selectAll();
         return;
       }
 
@@ -311,6 +571,12 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     activeCanvas.classes,
     activeCanvas.relationships,
     deleteSelected,
+    clipboard,
+    copySelected,
+    pasteCopied,
+    selectAll,
+    pendingSource,
+    relationshipChooser,
     selectedEdgeIds.length,
     selectedNodeIds.length,
   ]);
@@ -340,7 +606,13 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         id,
         type: "class",
         position,
-        data: { name: "NewClass", attributes: [], methods: [] },
+        data: {
+          name: "NewClass",
+          attributes: [],
+          methods: [],
+          sourceHandleIds: [],
+          targetHandleIds: [],
+        },
         selected: true,
       },
     ]);
@@ -365,15 +637,23 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     setNodes([]);
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
+    setPendingSource(null);
     setRelationshipChooser(null);
   };
 
   const selectCanvas = (canvasId: string) => {
     setActiveCanvasId(canvasId);
     const canvas = workspace.canvases.find((item) => item.id === canvasId);
-    if (canvas) setNodes(canvas.classes.map(toFlowNode));
+    if (canvas) {
+      setNodes(
+        canvas.classes.map((umlClass) =>
+          toFlowNode(umlClass, canvas.relationships),
+        ),
+      );
+    }
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
+    setPendingSource(null);
     setRelationshipChooser(null);
   };
 
@@ -400,19 +680,42 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
     setWorkspace((current) => ({ ...current!, canvases: remaining }));
     if (canvas.id === activeCanvasId) {
       setActiveCanvasId(remaining[0].id);
-      setNodes(remaining[0].classes.map(toFlowNode));
+      setNodes(
+        remaining[0].classes.map((umlClass) =>
+          toFlowNode(umlClass, remaining[0].relationships),
+        ),
+      );
     }
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
+    setPendingSource(null);
     setRelationshipChooser(null);
   };
 
   const openRelationshipEditor = () => {
     if (selectedEdgeIds.length !== 1) return;
+    const bounds = flowFrameRef.current?.getBoundingClientRect();
     setRelationshipChooser({
       mode: "edit",
       relationshipId: selectedEdgeIds[0],
+      position: bounds
+        ? { left: Math.max(12, bounds.width / 2 - 165), top: 18 }
+        : { left: 12, top: 12 },
     });
+  };
+
+  const deleteRelationship = (relationshipId: string) => {
+    const relationships = activeCanvas.relationships.filter(
+      (relationship) => relationship.id !== relationshipId,
+    );
+    updateActiveCanvas((canvas) => ({ ...canvas, relationships }));
+    setNodes((current) =>
+      current.map((node) => withRelationshipHandles(node, relationships)),
+    );
+    setSelectedEdgeIds((current) =>
+      current.filter((id) => id !== relationshipId),
+    );
+    setRelationshipChooser(null);
   };
 
   const chooseRelationshipKind = (kind: UMLRelationshipKind) => {
@@ -432,6 +735,10 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         ...canvas,
         relationships: [...canvas.relationships, relationship],
       }));
+      const relationships = [...activeCanvas.relationships, relationship];
+      setNodes((current) =>
+        current.map((node) => withRelationshipHandles(node, relationships)),
+      );
       setSelectedEdgeIds([relationship.id]);
       setSelectedNodeIds([]);
     } else {
@@ -444,6 +751,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
         ),
       }));
     }
+    setPendingSource(null);
     setRelationshipChooser(null);
   };
 
@@ -520,11 +828,33 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
             <button className="toolbar-action toolbar-action--primary" type="button" onClick={addClass}>
               <span aria-hidden="true">＋</span> Add class
             </button>
-            {(selectedNodeIds.length > 0 || selectedEdgeIds.length > 0) && (
-              <button className="toolbar-action toolbar-action--danger" type="button" onClick={deleteSelected}>
-                Delete selected
-              </button>
-            )}
+            <button className="toolbar-action" type="button" onClick={selectAll}>
+              Select All
+            </button>
+            <button
+              className="toolbar-action toolbar-action--danger"
+              type="button"
+              onClick={deleteSelected}
+              disabled={selectedNodeIds.length === 0 && selectedEdgeIds.length === 0}
+            >
+              Delete Selected
+            </button>
+            <button
+              className="toolbar-action"
+              type="button"
+              onClick={copySelected}
+              disabled={selectedNodeIds.length === 0}
+            >
+              Copy
+            </button>
+            <button
+              className="toolbar-action"
+              type="button"
+              onClick={pasteCopied}
+              disabled={!clipboard}
+            >
+              Paste
+            </button>
             {selectedEdgeIds.length > 0 && (
               <button
                 className="toolbar-action toolbar-action--danger"
@@ -557,7 +887,7 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
             flowFrameRef.current?.focus({ preventScroll: true });
           }}
         >
-          <ClassNodeActionsContext.Provider value={{ updateClassData }}>
+          <ClassNodeActionsContext.Provider value={{ updateClassData, onBorderClick }}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -566,12 +896,18 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
               onNodesChange={onNodesChange}
               onNodeDragStop={onNodeDragStop}
               onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
+              onEdgeClick={onEdgeClick}
+              onPaneClick={() => {
+                setPendingSource(null);
+                setRelationshipChooser(null);
+              }}
               onSelectionChange={onSelectionChange}
               connectionLineType={ConnectionLineType.Bezier}
               defaultEdgeOptions={{ type: "umlRelationship" }}
               deleteKeyCode={null}
               selectionOnDrag
+              selectionMode={SelectionMode.Full}
+              panOnDrag={[1]}
               selectionKeyCode="Shift"
               multiSelectionKeyCode="Shift"
               edgesFocusable
@@ -596,11 +932,21 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
           </div>
           {relationshipChooser && (
             <RelationshipTypePopover
+              key={
+                relationshipChooser.mode === "create"
+                  ? `create-${relationshipChooser.connection.source}-${relationshipChooser.connection.target}`
+                  : `edit-${relationshipChooser.relationshipId}`
+              }
               title={
                 relationshipChooser.mode === "create"
                   ? "Choose relationship type"
-                  : "Change relationship type"
+                  : "Manage connection"
               }
+              style={{
+                left: relationshipChooser.position.left,
+                top: relationshipChooser.position.top,
+                transform: "none",
+              }}
               initialKind={
                 relationshipChooser.mode === "edit"
                   ? activeCanvas.relationships.find(
@@ -610,7 +956,15 @@ function EditorWorkspace({ workspace, setWorkspace }: EditorWorkspaceProps) {
                   : undefined
               }
               onSelect={chooseRelationshipKind}
-              onCancel={() => setRelationshipChooser(null)}
+              onCancel={() => {
+                setRelationshipChooser(null);
+                setPendingSource(null);
+              }}
+              onDelete={
+                relationshipChooser.mode === "edit"
+                  ? () => deleteRelationship(relationshipChooser.relationshipId)
+                  : undefined
+              }
             />
           )}
         </section>

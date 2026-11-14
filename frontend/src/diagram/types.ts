@@ -21,6 +21,12 @@ export type UMLClass = {
 // React Flow stores class fields in `data`; position and id stay on the node itself.
 export type UMLClassNodeData = Pick<UMLClass, 'name' | 'attributes' | 'methods'>;
 
+// UI-only data used by the React Flow node to mount its hidden edge anchors.
+export type UMLClassNodeFlowData = UMLClassNodeData & {
+  sourceHandleIds: string[];
+  targetHandleIds: string[];
+};
+
 export type UMLRelationshipKind =
   | "inheritance"
   | "realization"

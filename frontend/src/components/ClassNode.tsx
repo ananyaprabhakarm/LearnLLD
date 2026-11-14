@@ -1,52 +1,99 @@
-import { useRef, useState } from "react";
-import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Handle,
+  Position,
+  useUpdateNodeInternals,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
 import type {
   UMLAttribute,
-  UMLClassNodeData,
+  UMLClassNodeFlowData,
   UMLMethod,
 } from "../diagram/types";
-import { useClassNodeActions } from "./ClassNodeActionsContext";
+import { useClassNodeActions, type UMLBorderPoint } from "./ClassNodeActionsContext";
 import "./ClassNode.css";
 
-type ClassFlowNode = Node<UMLClassNodeData, "class">;
+type ClassFlowNode = Node<UMLClassNodeFlowData, "class">;
 type EditingMember =
   | { kind: "attribute"; id: string; isNew?: boolean }
   | { kind: "method"; id: string; isNew?: boolean };
 type MemberDraft = { name: string; type: string };
 
-const handleSides = [
-  {
-    id: "top",
-    position: Position.Top,
-    sourceStyle: { left: "36%" },
-    targetStyle: { left: "64%" },
-  },
-  {
-    id: "right",
-    position: Position.Right,
-    sourceStyle: { top: "36%" },
-    targetStyle: { top: "64%" },
-  },
-  {
-    id: "bottom",
-    position: Position.Bottom,
-    sourceStyle: { left: "36%" },
-    targetStyle: { left: "64%" },
-  },
-  {
-    id: "left",
-    position: Position.Left,
-    sourceStyle: { top: "36%" },
-    targetStyle: { top: "64%" },
-  },
-];
+const borderPositions = {
+  top: Position.Top,
+  right: Position.Right,
+  bottom: Position.Bottom,
+  left: Position.Left,
+} as const;
+
+function getHandleLayout(handleId: string) {
+  const match = /^(source|target)-(top|right|bottom|left)(?:-(\d+))?$/.exec(
+    handleId,
+  );
+  if (!match) return null;
+  const [, type, side, rawOffset] = match;
+  const offset = rawOffset
+    ? Number(rawOffset)
+    : type === "source"
+      ? 36
+      : 64;
+  return {
+    type: type as "source" | "target",
+    side: side as keyof typeof borderPositions,
+    offset,
+    position: borderPositions[side as keyof typeof borderPositions],
+    style:
+      side === "top" || side === "bottom"
+        ? { left: `${offset}%` }
+        : { top: `${offset}%` },
+  };
+}
+
+function getBorderPoint(rect: DOMRect, clientX: number, clientY: number) {
+  const localX = clientX - rect.left;
+  const localY = clientY - rect.top;
+  const distances = [
+    { side: "top" as const, distance: localY, value: localX / rect.width },
+    { side: "right" as const, distance: rect.width - localX, value: localY / rect.height },
+    { side: "bottom" as const, distance: rect.height - localY, value: localX / rect.width },
+    { side: "left" as const, distance: localX, value: localY / rect.height },
+  ];
+  const nearest = distances.reduce((current, candidate) =>
+    candidate.distance < current.distance ? candidate : current,
+  );
+  if (nearest.distance > 14) return null;
+  const offset = Math.max(5, Math.min(95, Math.round(nearest.value * 100)));
+  return { side: nearest.side, offset } satisfies UMLBorderPoint;
+}
+
+function isInteractiveTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "button, input, textarea, select, .class-node__name, [contenteditable='true']",
+      ),
+    )
+  );
+}
+
+function borderPointStyle({ side, offset }: UMLBorderPoint) {
+  if (side === "top") return { left: `${offset}%`, top: "0%" };
+  if (side === "right") return { left: "100%", top: `${offset}%` };
+  if (side === "bottom") return { left: `${offset}%`, top: "100%" };
+  return { left: "0%", top: `${offset}%` };
+}
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
 export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
-  const { updateClassData } = useClassNodeActions();
+  const { updateClassData, onBorderClick } = useClassNodeActions();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const [hoveredBorderPoint, setHoveredBorderPoint] =
+    useState<UMLBorderPoint | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(data.name);
   const [editingMember, setEditingMember] = useState<EditingMember | null>(
@@ -55,6 +102,10 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
   const [memberDraft, setMemberDraft] = useState<MemberDraft | null>(null);
   const cancelNameBlur = useRef(false);
   const cancelMemberBlur = useRef(false);
+
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [data.sourceHandleIds, data.targetHandleIds, id, updateNodeInternals]);
 
   const beginNameEdit = () => {
     setNameDraft(data.name);
@@ -227,17 +278,64 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
   };
 
   return (
-    <div className="class-node">
-      {handleSides.map((side) => (
-        <Handle
-          key={`source-${side.id}`}
-          id={`source-${side.id}`}
-          className="class-node__handle class-node__handle--source"
-          type="source"
-          position={side.position}
-          style={side.sourceStyle}
+    <div
+      className="class-node"
+      onPointerMove={(event) => {
+        const point = getBorderPoint(
+          event.currentTarget.getBoundingClientRect(),
+          event.clientX,
+          event.clientY,
+        );
+        setHoveredBorderPoint(point);
+      }}
+      onPointerDown={(event) => {
+        if (isInteractiveTarget(event.target)) return;
+        const point = getBorderPoint(
+          event.currentTarget.getBoundingClientRect(),
+          event.clientX,
+          event.clientY,
+        );
+        if (!point) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onBorderClick(id, point, event.clientX, event.clientY);
+      }}
+      onClick={(event) => {
+        if (isInteractiveTarget(event.target)) return;
+        const point = getBorderPoint(
+          event.currentTarget.getBoundingClientRect(),
+          event.clientX,
+          event.clientY,
+        );
+        if (point) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      onPointerLeave={() => setHoveredBorderPoint(null)}
+    >
+      {[...data.sourceHandleIds, ...data.targetHandleIds].map((handleId) => {
+        const layout = getHandleLayout(handleId);
+        if (!layout) return null;
+        return (
+          <Handle
+            key={handleId}
+            id={handleId}
+            className="class-node__handle"
+            type={layout.type}
+            position={layout.position}
+            style={layout.style}
+          />
+        );
+      })}
+
+      {hoveredBorderPoint && (
+        <span
+          className="class-node__border-indicator"
+          style={borderPointStyle(hoveredBorderPoint)}
+          aria-hidden="true"
         />
-      ))}
+      )}
 
       {editingName ? (
         <input
@@ -426,16 +524,6 @@ export default function ClassNode({ id, data }: NodeProps<ClassFlowNode>) {
         </button>
       </section>
 
-      {handleSides.map((side) => (
-        <Handle
-          key={`target-${side.id}`}
-          id={`target-${side.id}`}
-          className="class-node__handle class-node__handle--target"
-          type="target"
-          position={side.position}
-          style={side.targetStyle}
-        />
-      ))}
     </div>
   );
 }
